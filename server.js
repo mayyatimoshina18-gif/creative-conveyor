@@ -105,6 +105,8 @@ function getMainKeyboard(isManager = false, isExecutorRegistered = false) {
       keyboard: [
         [{ text: "Моя анкета" }],
         [{ text: "Редактировать анкету" }],
+        [{ text: "Новые задачи" }],
+        [{ text: "Мои отклики" }],
         [{ text: "Я менеджер" }]
       ],
       resize_keyboard: true
@@ -156,6 +158,17 @@ function getModerationKeyboard() {
   };
 }
 
+function getTaskAfterCreateKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "Опубликовать последнюю задачу" }],
+      [{ text: "Мои задачи" }],
+      [{ text: "В меню менеджера" }]
+    ],
+    resize_keyboard: true
+  };
+}
+
 function getManagerContact(from) {
   if (from?.username) return `@${from.username}`;
   if (from?.first_name) return `${from.first_name} (id: ${from.id})`;
@@ -194,7 +207,6 @@ function formatField(field, label = "Материал") {
     if (field.caption && field.caption.trim()) {
       return `${label} прикреплено файлом.\nКомментарий: ${field.caption}`;
     }
-
     return `${label} прикреплено файлом.`;
   }
 
@@ -206,8 +218,10 @@ function formatTaskCard(task) {
     `Задача #${task.id}`,
     ``,
     `Название: ${task.title || "—"}`,
+    `Категория: ${task.category || "—"}`,
     `Дедлайн: ${task.deadline || "—"}`,
     `Стоимость: ${task.price || "—"}`,
+    `Статус: ${task.status || "—"}`,
     ``,
     `ТЗ:`,
     `${formatField(task.brief, "ТЗ")}`,
@@ -222,6 +236,30 @@ function formatTaskCard(task) {
     `${task.comment || "—"}`,
     ``,
     `Менеджер: ${task.managerContact}`
+  ].join("\n");
+}
+
+function formatExecutorProfile(profile) {
+  return [
+    `Анкета исполнителя`,
+    ``,
+    `Имя: ${profile.fullName || "—"}`,
+    `Контакт: ${profile.telegramContact || "—"}`,
+    `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
+    `Подтверждённые специализации: ${profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : "—"}`,
+    `Портфолио: ${profile.portfolio || "—"}`,
+    `Способ выплаты: ${profile.paymentMethod || "—"}`,
+    `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
+    `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
+    `Недоступное время: ${profile.unavailableTime || "—"}`,
+    `Статус: ${profile.status || "—"}`,
+    `Подтвердил менеджер: ${profile.approvedBy || "—"}`,
+    `Оценка по ТЗ: ${typeof profile.reviewAccuracy === "number" ? profile.reviewAccuracy : "—"}`,
+    `Оценка скорости: ${typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : "—"}`,
+    `Оценка эстетики: ${typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : "—"}`,
+    `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
+    `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
+    `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
   ].join("\n");
 }
 
@@ -248,12 +286,16 @@ function startTaskCreation(chatId, from) {
       managerUsername: from?.username || null,
       managerContact: getManagerContact(from),
       title: "",
+      category: "",
       deadline: "",
       price: "",
       brief: null,
       sources: null,
       references: null,
-      comment: null
+      comment: null,
+      status: "Создана",
+      responses: [],
+      publishedAt: null
     }
   });
 
@@ -267,7 +309,7 @@ function finishTaskCreation(chatId, state) {
   sendMessage(
     chatId,
     `Задача создана.\n\n${formatTaskCard(state.task)}`,
-    getMainKeyboard(true)
+    getTaskAfterCreateKeyboard()
   );
 
   if (state.task.brief?.type === "document") {
@@ -297,8 +339,29 @@ function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Название задачи лучше отправить текстом.");
       return;
     }
-
     state.task.title = input.value;
+    state.step = "category";
+    sendMessage(chatId, "Введи категорию задачи: Статика, Моушен или Лендинги.");
+    return;
+  }
+
+  if (state.step === "category") {
+    if (!input || input.type !== "text") {
+      sendMessage(chatId, "Категорию лучше отправить текстом.");
+      return;
+    }
+
+    const value = input.value.trim();
+    const normalized = SPECIALIZATION_OPTIONS.find(
+      item => item.toLowerCase() === value.toLowerCase()
+    );
+
+    if (!normalized) {
+      sendMessage(chatId, "Категория должна быть одной из трёх: Статика, Моушен, Лендинги.");
+      return;
+    }
+
+    state.task.category = normalized;
     state.step = "deadline";
     sendMessage(chatId, "Введи дедлайн. Например: сегодня до 18:00 или 16 марта 14:00.");
     return;
@@ -309,7 +372,6 @@ function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Дедлайн лучше отправить текстом.");
       return;
     }
-
     state.task.deadline = input.value;
     state.step = "price";
     sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
@@ -321,47 +383,30 @@ function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Стоимость лучше отправить текстом.");
       return;
     }
-
     state.task.price = input.value;
     state.step = "brief";
-    sendMessage(
-      chatId,
-      "Отправь ТЗ. Можно текст, ссылку или файл.",
-      getSkipKeyboard()
-    );
+    sendMessage(chatId, "Отправь ТЗ. Можно текст, ссылку или файл.", getSkipKeyboard());
     return;
   }
 
   if (state.step === "brief") {
     state.task.brief = text === "Пропустить" ? null : input;
     state.step = "sources";
-    sendMessage(
-      chatId,
-      "Отправь источники. Можно текст, ссылку или файл. Это поле необязательное.",
-      getSkipKeyboard()
-    );
+    sendMessage(chatId, "Отправь источники. Можно текст, ссылку или файл. Это поле необязательное.", getSkipKeyboard());
     return;
   }
 
   if (state.step === "sources") {
     state.task.sources = text === "Пропустить" ? null : input;
     state.step = "references";
-    sendMessage(
-      chatId,
-      "Отправь референсы. Можно текст, ссылку или файл. Это поле необязательное.",
-      getSkipKeyboard()
-    );
+    sendMessage(chatId, "Отправь референсы. Можно текст, ссылку или файл. Это поле необязательное.", getSkipKeyboard());
     return;
   }
 
   if (state.step === "references") {
     state.task.references = text === "Пропустить" ? null : input;
     state.step = "comment";
-    sendMessage(
-      chatId,
-      "Отправь комментарий. Это поле необязательное.",
-      getSkipKeyboard()
-    );
+    sendMessage(chatId, "Отправь комментарий. Это поле необязательное.", getSkipKeyboard());
     return;
   }
 
@@ -409,41 +454,16 @@ function startExecutorRegistration(chatId, from, existing = null) {
       newcomerBoost: typeof existing?.newcomerBoost === "number" ? existing.newcomerBoost : null,
       rating: typeof existing?.rating === "number" ? existing.rating : null,
       createdAt: existing?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      responseHistory: existing?.responseHistory || []
     }
   });
 
   sendMessage(chatId, "Введи своё имя и фамилию.");
 }
 
-function formatExecutorProfile(profile) {
-  return [
-    `Анкета исполнителя`,
-    ``,
-    `Имя: ${profile.fullName || "—"}`,
-    `Контакт: ${profile.telegramContact || "—"}`,
-    `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
-    `Подтверждённые специализации: ${profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : "—"}`,
-    `Портфолио: ${profile.portfolio || "—"}`,
-    `Способ выплаты: ${profile.paymentMethod || "—"}`,
-    `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
-    `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
-    `Недоступное время: ${profile.unavailableTime || "—"}`,
-    `Статус: ${profile.status || "—"}`,
-    `Подтвердил менеджер: ${profile.approvedBy || "—"}`,
-    `Оценка по ТЗ: ${typeof profile.reviewAccuracy === "number" ? profile.reviewAccuracy : "—"}`,
-    `Оценка скорости: ${typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : "—"}`,
-    `Оценка эстетики: ${typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : "—"}`,
-    `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
-    `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
-    `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
-  ].join("\n");
-}
-
 function notifyManagersAboutExecutor(profile) {
-  if (managers.size === 0) {
-    return;
-  }
+  if (managers.size === 0) return;
 
   const text = [
     `Новая анкета исполнителя`,
@@ -461,7 +481,6 @@ function notifyManagersAboutExecutor(profile) {
 
   for (const managerChatId of managers) {
     sendMessage(managerChatId, text, getMainKeyboard(true));
-
     if (profile.paymentFile?.type === "document") {
       sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
     }
@@ -506,15 +525,10 @@ function handleExecutorRegistrationStep(chatId, message, state) {
       sendMessage(chatId, "Имя лучше отправить текстом.");
       return;
     }
-
     state.profile.fullName = input.value;
     state.step = "specializations";
     state.profile.specializations = [];
-    sendMessage(
-      chatId,
-      "Выбери специализации. Можно несколько. Нажимай кнопки по одной, потом нажми Готово.",
-      getDoneKeyboard(SPECIALIZATION_OPTIONS)
-    );
+    sendMessage(chatId, "Выбери специализации. Можно несколько. Нажимай кнопки по одной, потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
     return;
   }
 
@@ -524,13 +538,8 @@ function handleExecutorRegistrationStep(chatId, message, state) {
         sendMessage(chatId, "Нужно выбрать хотя бы одну специализацию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
         return;
       }
-
       state.step = "portfolio";
-      sendMessage(
-        chatId,
-        "Пришли ссылку на портфолио. Подойдёт любое портфолио, не обязательно по баннерам. Поле можно пропустить.",
-        getSkipKeyboard()
-      );
+      sendMessage(chatId, "Пришли ссылку на портфолио. Подойдёт любое портфолио, не обязательно по баннерам. Поле можно пропустить.", getSkipKeyboard());
       return;
     }
 
@@ -543,11 +552,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
       state.profile.specializations.push(text);
     }
 
-    sendMessage(
-      chatId,
-      `Выбрано: ${state.profile.specializations.join(", ")}`,
-      getDoneKeyboard(SPECIALIZATION_OPTIONS)
-    );
+    sendMessage(chatId, `Выбрано: ${state.profile.specializations.join(", ")}`, getDoneKeyboard(SPECIALIZATION_OPTIONS));
     return;
   }
 
@@ -581,10 +586,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
     }
 
     state.step = "payment_details_business";
-    sendMessage(
-      chatId,
-      `Введи реквизиты для ${text}. Потом отдельным сообщением можно будет приложить файл.`
-    );
+    sendMessage(chatId, `Введи реквизиты для ${text}. Потом отдельным сообщением можно будет приложить файл.`);
     return;
   }
 
@@ -598,11 +600,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
     state.profile.paymentFile = null;
     state.step = "unavailable_days";
     state.profile.unavailableDays = [];
-    sendMessage(
-      chatId,
-      "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.",
-      getDoneKeyboard(DAY_OPTIONS)
-    );
+    sendMessage(chatId, "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.", getDoneKeyboard(DAY_OPTIONS));
     return;
   }
 
@@ -614,11 +612,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
 
     state.profile.paymentDetails = input;
     state.step = "payment_file";
-    sendMessage(
-      chatId,
-      "Теперь можешь приложить файл с реквизитами. Это поле необязательное.",
-      getSkipKeyboard()
-    );
+    sendMessage(chatId, "Теперь можешь приложить файл с реквизитами. Это поле необязательное.", getSkipKeyboard());
     return;
   }
 
@@ -634,22 +628,14 @@ function handleExecutorRegistrationStep(chatId, message, state) {
 
     state.step = "unavailable_days";
     state.profile.unavailableDays = [];
-    sendMessage(
-      chatId,
-      "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.",
-      getDoneKeyboard(DAY_OPTIONS)
-    );
+    sendMessage(chatId, "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.", getDoneKeyboard(DAY_OPTIONS));
     return;
   }
 
   if (state.step === "unavailable_days") {
     if (text === "Готово") {
       state.step = "unavailable_time";
-      sendMessage(
-        chatId,
-        "Если есть временные промежутки, когда ты не можешь брать задачи, напиши их текстом. Например: по будням с 10:00 до 14:00. Если ограничений нет — нажми Пропустить.",
-        getSkipKeyboard()
-      );
+      sendMessage(chatId, "Если есть временные промежутки, когда ты не можешь брать задачи, напиши их текстом. Например: по будням с 10:00 до 14:00. Если ограничений нет — нажми Пропустить.", getSkipKeyboard());
       return;
     }
 
@@ -662,11 +648,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
       state.profile.unavailableDays.push(text);
     }
 
-    sendMessage(
-      chatId,
-      `Выбрано: ${state.profile.unavailableDays.join(", ") || "—"}`,
-      getDoneKeyboard(DAY_OPTIONS)
-    );
+    sendMessage(chatId, `Выбрано: ${state.profile.unavailableDays.join(", ") || "—"}`, getDoneKeyboard(DAY_OPTIONS));
     return;
   }
 
@@ -702,11 +684,7 @@ function showNextPendingExecutor(managerChatId) {
 
   if (!pending.length) {
     userStates.delete(managerChatId);
-    sendMessage(
-      managerChatId,
-      "Заявок на модерации сейчас нет.",
-      getMainKeyboard(true)
-    );
+    sendMessage(managerChatId, "Заявок на модерации сейчас нет.", getMainKeyboard(true));
     return;
   }
 
@@ -722,11 +700,7 @@ function showNextPendingExecutor(managerChatId) {
     reviewAesthetics: null
   });
 
-  sendMessage(
-    managerChatId,
-    `Заявка на модерацию\n\n${formatExecutorProfile(profile)}`,
-    getModerationKeyboard()
-  );
+  sendMessage(managerChatId, `Заявка на модерацию\n\n${formatExecutorProfile(profile)}`, getModerationKeyboard());
 
   if (profile.paymentFile?.type === "document") {
     sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
@@ -786,11 +760,7 @@ function handleManagerReviewStep(chatId, text, from, state) {
     if (text === "Подтвердить исполнителя") {
       state.step = "verified_specializations";
       state.selectedSpecializations = [];
-      sendMessage(
-        chatId,
-        "Выбери подтверждённые специализации. Можно несколько. Потом нажми Готово.",
-        getDoneKeyboard(SPECIALIZATION_OPTIONS)
-      );
+      sendMessage(chatId, "Выбери подтверждённые специализации. Можно несколько. Потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
       return;
     }
 
@@ -819,17 +789,12 @@ function handleManagerReviewStep(chatId, text, from, state) {
       state.selectedSpecializations.push(text);
     }
 
-    sendMessage(
-      chatId,
-      `Подтверждено: ${state.selectedSpecializations.join(", ")}`,
-      getDoneKeyboard(SPECIALIZATION_OPTIONS)
-    );
+    sendMessage(chatId, `Подтверждено: ${state.selectedSpecializations.join(", ")}`, getDoneKeyboard(SPECIALIZATION_OPTIONS));
     return;
   }
 
   if (state.step === "review_accuracy") {
     const value = Number(text);
-
     if (!Number.isInteger(value) || value < 1 || value > 5) {
       sendMessage(chatId, "Введи целое число от 1 до 5.");
       return;
@@ -843,7 +808,6 @@ function handleManagerReviewStep(chatId, text, from, state) {
 
   if (state.step === "review_speed") {
     const value = Number(text);
-
     if (!Number.isInteger(value) || value < 1 || value > 5) {
       sendMessage(chatId, "Введи целое число от 1 до 5.");
       return;
@@ -857,7 +821,6 @@ function handleManagerReviewStep(chatId, text, from, state) {
 
   if (state.step === "review_aesthetics") {
     const value = Number(text);
-
     if (!Number.isInteger(value) || value < 1 || value > 5) {
       sendMessage(chatId, "Введи целое число от 1 до 5.");
       return;
@@ -907,6 +870,80 @@ function handleManagerReviewStep(chatId, text, from, state) {
   }
 }
 
+function getConfirmedExecutorsForCategory(category) {
+  return Array.from(executors.values()).filter(profile => {
+    return (
+      profile.status === "Подтверждён" &&
+      profile.verifiedSpecializations?.includes(category)
+    );
+  });
+}
+
+function publishTaskToExecutors(managerChatId, task) {
+  const candidates = getConfirmedExecutorsForCategory(task.category);
+
+  if (!candidates.length) {
+    sendMessage(
+      managerChatId,
+      `Нет подтверждённых исполнителей под категорию "${task.category}".`,
+      getMainKeyboard(true)
+    );
+    return;
+  }
+
+  task.status = "Ждёт исполнителя";
+  task.publishedAt = new Date().toISOString();
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [
+        { text: "Принять", callback_data: `accept_${task.id}` },
+        { text: "Отклонить", callback_data: `decline_${task.id}` }
+      ]
+    ]
+  };
+
+  for (const profile of candidates) {
+    sendMessage(
+      profile.telegramId,
+      `Новая задача доступна.\n\n${formatTaskCard(task)}`,
+      inlineKeyboard
+    );
+
+    if (task.brief?.type === "document") {
+      sendDocument(profile.telegramId, task.brief.file_id, "Файл ТЗ");
+    }
+    if (task.sources?.type === "document") {
+      sendDocument(profile.telegramId, task.sources.file_id, "Файл с источниками");
+    }
+    if (task.references?.type === "document") {
+      sendDocument(profile.telegramId, task.references.file_id, "Файл с референсами");
+    }
+  }
+
+  sendMessage(
+    managerChatId,
+    `Задача #${task.id} опубликована исполнителям.\nПодходящих исполнителей: ${candidates.length}`,
+    getMainKeyboard(true)
+  );
+}
+
+function getLastManagerTask(managerId) {
+  const managerTasks = tasks.filter(task => task.managerId === managerId);
+  if (!managerTasks.length) return null;
+  return managerTasks[managerTasks.length - 1];
+}
+
+function formatResponses(task) {
+  if (!task.responses?.length) return "Откликов пока нет.";
+
+  return task.responses
+    .map((response, index) => {
+      return `${index + 1}. ${response.executorName} (${response.executorContact}) — ${response.decision}`;
+    })
+    .join("\n");
+}
+
 function handleTextMessage(chatId, text, from, message) {
   const state = userStates.get(chatId);
   const executorProfile = executors.get(chatId);
@@ -944,11 +981,7 @@ function handleTextMessage(chatId, text, from, message) {
       return;
     }
 
-    sendMessage(
-      chatId,
-      "Начинаем регистрацию исполнителя.",
-      getMainKeyboard(false)
-    );
+    sendMessage(chatId, "Начинаем регистрацию исполнителя.", getMainKeyboard(false));
     startExecutorRegistration(chatId, from, null);
     return;
   }
@@ -969,6 +1002,53 @@ function handleTextMessage(chatId, text, from, message) {
 
   if (text === "Редактировать анкету") {
     startExecutorRegistration(chatId, from, executorProfile || null);
+    return;
+  }
+
+  if (text === "Новые задачи") {
+    if (!executorProfile || executorProfile.status !== "Подтверждён") {
+      sendMessage(chatId, "Новые задачи доступны только подтверждённым исполнителям.", getMainKeyboard(false, Boolean(executorProfile)));
+      return;
+    }
+
+    const relevantTasks = tasks.filter(task => {
+      return (
+        task.status === "Ждёт исполнителя" &&
+        executorProfile.verifiedSpecializations?.includes(task.category)
+      );
+    });
+
+    if (!relevantTasks.length) {
+      sendMessage(chatId, "Сейчас новых задач нет.", getMainKeyboard(false, true));
+      return;
+    }
+
+    const summary = relevantTasks
+      .map(task => `#${task.id} — ${task.title} | ${task.category} | ${task.deadline} | ${task.price}`)
+      .join("\n");
+
+    sendMessage(chatId, `Новые задачи:\n\n${summary}`, getMainKeyboard(false, true));
+    return;
+  }
+
+  if (text === "Мои отклики") {
+    if (!executorProfile) {
+      sendMessage(chatId, "Сначала заполни анкету.", getMainKeyboard(false));
+      return;
+    }
+
+    const history = executorProfile.responseHistory || [];
+
+    if (!history.length) {
+      sendMessage(chatId, "У тебя пока нет откликов.", getMainKeyboard(false, true));
+      return;
+    }
+
+    const summary = history
+      .map(item => `#${item.taskId} — ${item.taskTitle} | ${item.decision}`)
+      .join("\n");
+
+    sendMessage(chatId, `Твои отклики:\n\n${summary}`, getMainKeyboard(false, true));
     return;
   }
 
@@ -995,6 +1075,17 @@ function handleTextMessage(chatId, text, from, message) {
       return;
     }
 
+    if (text === "Опубликовать последнюю задачу") {
+      const task = getLastManagerTask(from?.id);
+      if (!task) {
+        sendMessage(chatId, "У тебя нет задач для публикации.", getMainKeyboard(true));
+        return;
+      }
+
+      publishTaskToExecutors(chatId, task);
+      return;
+    }
+
     if (text === "Мои задачи") {
       const managerTasks = tasks.filter(task => task.managerId === from?.id);
 
@@ -1004,7 +1095,7 @@ function handleTextMessage(chatId, text, from, message) {
       }
 
       const summary = managerTasks
-        .map(task => `#${task.id} — ${task.title} | ${task.deadline} | ${task.price}`)
+        .map(task => `#${task.id} — ${task.title} | ${task.category} | ${task.status} | отклики: ${task.responses?.length || 0}`)
         .join("\n");
 
       sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
@@ -1013,6 +1104,19 @@ function handleTextMessage(chatId, text, from, message) {
 
     if (text === "Заявки в исполнители") {
       showNextPendingExecutor(chatId);
+      return;
+    }
+
+    if (text.startsWith("Отклики по задаче #")) {
+      const id = Number(text.replace("Отклики по задаче #", "").trim());
+      const task = tasks.find(item => item.id === id && item.managerId === from?.id);
+
+      if (!task) {
+        sendMessage(chatId, "Задача не найдена.", getMainKeyboard(true));
+        return;
+      }
+
+      sendMessage(chatId, `Отклики по задаче #${task.id}:\n\n${formatResponses(task)}`, getMainKeyboard(true));
       return;
     }
 
@@ -1026,6 +1130,72 @@ function handleTextMessage(chatId, text, from, message) {
   }
 
   sendMessage(chatId, "Напиши /start, чтобы выбрать роль.");
+}
+
+function handleCallbackQuery(callbackQuery) {
+  const data = callbackQuery.data;
+  const chatId = callbackQuery.message?.chat?.id;
+  const from = callbackQuery.from;
+
+  if (!chatId || !data) return;
+
+  const executor = executors.get(from.id);
+
+  if (!executor || executor.status !== "Подтверждён") {
+    sendMessage(chatId, "Откликаться на задачи могут только подтверждённые исполнители.");
+    return;
+  }
+
+  const [action, rawTaskId] = data.split("_");
+  const taskId = Number(rawTaskId);
+  const task = tasks.find(item => item.id === taskId);
+
+  if (!task) {
+    sendMessage(chatId, "Задача не найдена.");
+    return;
+  }
+
+  const existingResponse = task.responses.find(item => item.executorId === from.id);
+  if (existingResponse) {
+    sendMessage(chatId, "Ты уже ответил на эту задачу.");
+    return;
+  }
+
+  const decision = action === "accept" ? "Принял" : "Отклонил";
+
+  task.responses.push({
+    executorId: from.id,
+    executorName: executor.fullName || from.first_name || "Без имени",
+    executorContact: executor.telegramContact || (from.username ? `@${from.username}` : `id: ${from.id}`),
+    decision,
+    createdAt: new Date().toISOString()
+  });
+
+  executor.responseHistory = executor.responseHistory || [];
+  executor.responseHistory.push({
+    taskId: task.id,
+    taskTitle: task.title,
+    decision,
+    createdAt: new Date().toISOString()
+  });
+  executors.set(from.id, executor);
+
+  if (task.responses.length > 0 && task.status === "Ждёт исполнителя") {
+    task.status = "Есть отклики";
+  }
+
+  sendMessage(chatId, `Твой отклик по задаче #${task.id} сохранён: ${decision}.`, getMainKeyboard(false, true));
+
+  sendMessage(
+    task.managerId,
+    `Новый отклик по задаче #${task.id}.\n\nИсполнитель: ${executor.fullName}\nКонтакт: ${executor.telegramContact}\nРешение: ${decision}`,
+    getMainKeyboard(true)
+  );
+
+  sendTelegramRequest("answerCallbackQuery", {
+    callback_query_id: callbackQuery.id,
+    text: `Сохранено: ${decision}`
+  });
 }
 
 const server = http.createServer((req, res) => {
@@ -1055,13 +1225,18 @@ const server = http.createServer((req, res) => {
 
       try {
         const update = JSON.parse(body);
-        const message = update.message;
-        const chatId = message?.chat?.id;
-        const text = message?.text || null;
-        const from = message?.from || null;
 
-        if (chatId && message) {
-          handleTextMessage(chatId, text, from, message);
+        if (update.callback_query) {
+          handleCallbackQuery(update.callback_query);
+        } else if (update.message) {
+          const message = update.message;
+          const chatId = message?.chat?.id;
+          const text = message?.text || null;
+          const from = message?.from || null;
+
+          if (chatId && message) {
+            handleTextMessage(chatId, text, from, message);
+          }
         }
       } catch (error) {
         console.error("Parse error:", error);
