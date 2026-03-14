@@ -5,12 +5,17 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD;
 
+// Для теста: 1 минута. Потом поменяем.
+const REMINDER_DELAY_MS = 60 * 1000;
+const MAX_REMINDER_ATTEMPTS = 3;
+
 const waitingForManagerPassword = new Set();
 const managers = new Set();
 const userStates = new Map();
 const tasks = [];
 const executors = new Map();
 const managerContacts = new Map();
+const taskReminderState = new Map();
 
 const SPECIALIZATION_OPTIONS = ["Статика", "Моушен", "Лендинги"];
 const DAY_OPTIONS = [
@@ -27,6 +32,14 @@ const PAYMENT_OPTIONS = [
   "ИП",
   "Переводом"
 ];
+
+const DATE_OPTION_VALUES = {
+  "Сегодня": 0,
+  "Завтра": 1,
+  "Послезавтра": 2
+};
+
+const TIME_OPTIONS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00"];
 
 function sendTelegramRequest(method, payload, callback) {
   if (!BOT_TOKEN) {
@@ -85,6 +98,13 @@ function sendDocument(chatId, fileId, caption) {
     chat_id: chatId,
     document: fileId,
     caption
+  });
+}
+
+function answerCallback(callbackQueryId, text) {
+  sendTelegramRequest("answerCallbackQuery", {
+    callback_query_id: callbackQueryId,
+    text
   });
 }
 
@@ -172,27 +192,45 @@ function getTaskAfterCreateKeyboard() {
   };
 }
 
-function getExecutorTaskActionKeyboard(task) {
-  const actions = [];
-
-  if (task.status === "Назначена") {
-    actions.push([{ text: `Действие по задаче #${task.id}: Изучил ТЗ` }]);
-  } else if (task.status === "ТЗ изучено") {
-    actions.push([{ text: `Действие по задаче #${task.id}: Взял в работу` }]);
-  } else if (task.status === "В работе") {
-    actions.push([{ text: `Действие по задаче #${task.id}: Показать 30%` }]);
-  } else if (task.status === "30%") {
-    actions.push([{ text: `Действие по задаче #${task.id}: Показать 60%` }]);
-  } else if (task.status === "60%") {
-    actions.push([{ text: `Действие по задаче #${task.id}: Сдать задачу` }]);
-  }
-
+function getDateKeyboard() {
   return {
     keyboard: [
-      ...actions,
-      [{ text: "Мои отклики" }],
-      [{ text: "Моя анкета" }]
+      [{ text: "Сегодня" }, { text: "Завтра" }, { text: "Послезавтра" }],
+      [{ text: "Ввести дату вручную" }]
     ],
+    resize_keyboard: true
+  };
+}
+
+function getTimeKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "10:00" }, { text: "12:00" }, { text: "14:00" }],
+      [{ text: "16:00" }, { text: "18:00" }, { text: "20:00" }],
+      [{ text: "Ввести время вручную" }]
+    ],
+    resize_keyboard: true
+  };
+}
+
+function getExecutorTaskActionKeyboard(task) {
+  let row = null;
+
+  if (task.status === "Назначена") {
+    row = [`Действие по задаче #${task.id}: Изучил ТЗ`];
+  } else if (task.status === "ТЗ изучено") {
+    row = [`Действие по задаче #${task.id}: Взял в работу`];
+  } else if (task.status === "Правки") {
+    row = [`Действие по задаче #${task.id}: Сдать задачу`];
+  }
+
+  const keyboard = [];
+  if (row) keyboard.push(row.map(text => ({ text })));
+  keyboard.push([{ text: "Мои отклики" }]);
+  keyboard.push([{ text: "Моя анкета" }]);
+
+  return {
+    keyboard,
     resize_keyboard: true
   };
 }
@@ -208,6 +246,21 @@ function getManagerReviewTaskKeyboard(taskId) {
     ],
     resize_keyboard: true
   };
+}
+
+function getRawManagerContact(from) {
+  if (from?.username) return `@${from.username}`;
+  return null;
+}
+
+function getManagerContact(fromOrId) {
+  if (typeof fromOrId === "object" && fromOrId?.username) return `@${fromOrId.username}`;
+  const id = typeof fromOrId === "object" ? fromOrId?.id : fromOrId;
+  return managerContacts.get(id) || `id: ${id || "unknown"}`;
+}
+
+function getExecutorContactFromProfile(profile) {
+  return profile.telegramContact || `id: ${profile.telegramId}`;
 }
 
 function extractInput(message) {
@@ -280,19 +333,12 @@ function isValidUnavailableTime(value) {
   return lines.every(line => regex.test(line));
 }
 
-function getRawManagerContact(from) {
-  if (from?.username) return `@${from.username}`;
-  return null;
+function isValidManualDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
 
-function getManagerContact(fromOrId) {
-  if (typeof fromOrId === "object" && fromOrId?.username) return `@${fromOrId.username}`;
-  const id = typeof fromOrId === "object" ? fromOrId?.id : fromOrId;
-  return managerContacts.get(id) || `id: ${id || "unknown"}`;
-}
-
-function getExecutorContactFromProfile(profile) {
-  return profile.telegramContact || `id: ${profile.telegramId}`;
+function isValidManualTime(value) {
+  return /^\d{2}:\d{2}$/.test(value.trim());
 }
 
 function formatField(field, label = "Материал") {
@@ -310,6 +356,11 @@ function formatField(field, label = "Материал") {
   return "—";
 }
 
+function formatCategories(categories) {
+  if (!categories || !categories.length) return "—";
+  return categories.join(", ");
+}
+
 function formatTaskCard(task) {
   const assignedLine = task.assignedExecutorName
     ? `Исполнитель: ${task.assignedExecutorName} (${task.assignedExecutorContact || "—"})`
@@ -319,7 +370,7 @@ function formatTaskCard(task) {
     `Задача #${task.id}`,
     ``,
     `Название: ${task.title || "—"}`,
-    `Категория: ${task.category || "—"}`,
+    `Категории: ${formatCategories(task.categories)}`,
     `Дедлайн: ${task.deadline || "—"}`,
     `Стоимость: ${task.price || "—"}`,
     `Статус: ${task.status || "—"}`,
@@ -385,11 +436,11 @@ function getResponseRecommendation(executor) {
   return { label: "Ниже приоритета", score: rating };
 }
 
-function getConfirmedExecutorsForCategory(category) {
+function getConfirmedExecutorsForCategories(categories) {
   return Array.from(executors.values()).filter(profile => {
     return (
       profile.status === "Подтверждён" &&
-      profile.verifiedSpecializations?.includes(category)
+      profile.verifiedSpecializations?.some(spec => categories.includes(spec))
     );
   });
 }
@@ -426,6 +477,111 @@ function notifyTaskMaterials(chatId, task) {
   }
 }
 
+function clearTaskReminder(taskId) {
+  const state = taskReminderState.get(taskId);
+  if (state?.timeoutId) clearTimeout(state.timeoutId);
+  taskReminderState.delete(taskId);
+}
+
+function scheduleTaskReminder(taskId, stageKey) {
+  clearTaskReminder(taskId);
+
+  const state = {
+    stageKey,
+    attempts: 0,
+    timeoutId: null
+  };
+
+  taskReminderState.set(taskId, state);
+
+  function tick() {
+    const task = tasks.find(t => t.id === taskId);
+    const reminderState = taskReminderState.get(taskId);
+
+    if (!task || !reminderState || reminderState.stageKey !== stageKey) return;
+
+    if (shouldStopReminder(task, stageKey)) {
+      clearTaskReminder(taskId);
+      return;
+    }
+
+    reminderState.attempts += 1;
+
+    if (reminderState.attempts > MAX_REMINDER_ATTEMPTS) {
+      sendMessage(
+        task.managerId,
+        `Исполнитель не подтвердил этап "${getStageLabel(stageKey)}" по задаче #${task.id} после ${MAX_REMINDER_ATTEMPTS} напоминаний.`,
+        getManagerReviewTaskKeyboard(task.id)
+      );
+      clearTaskReminder(taskId);
+      return;
+    }
+
+    sendStageReminder(task, stageKey, reminderState.attempts);
+
+    reminderState.timeoutId = setTimeout(tick, REMINDER_DELAY_MS);
+  }
+
+  state.timeoutId = setTimeout(tick, REMINDER_DELAY_MS);
+}
+
+function shouldStopReminder(task, stageKey) {
+  if (stageKey === "read") return task.status !== "Назначена";
+  if (stageKey === "inwork") return task.status !== "ТЗ изучено";
+  if (stageKey === "30") return task.status !== "В работе";
+  if (stageKey === "60") return task.status !== "30%";
+  if (stageKey === "final") return !(task.status === "60%" || task.status === "Правки");
+  return true;
+}
+
+function getStageLabel(stageKey) {
+  if (stageKey === "read") return "Ознакомился с ТЗ";
+  if (stageKey === "inwork") return "Взял в работу";
+  if (stageKey === "30") return "30%";
+  if (stageKey === "60") return "60%";
+  if (stageKey === "final") return "Всё готово";
+  return stageKey;
+}
+
+function sendStageReminder(task, stageKey, attempt) {
+  let text = "";
+  let inline_keyboard = [];
+
+  if (stageKey === "read") {
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nОзнакомился ли ты с ТЗ по задаче #${task.id}?`;
+    inline_keyboard = [[
+      { text: "Да", callback_data: `stage_read_yes_${task.id}` },
+      { text: "Нет", callback_data: `stage_read_no_${task.id}` }
+    ]];
+  } else if (stageKey === "inwork") {
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВзял ли ты в работу задачу #${task.id}?`;
+    inline_keyboard = [[
+      { text: "Да", callback_data: `stage_inwork_yes_${task.id}` },
+      { text: "Нет", callback_data: `stage_inwork_no_${task.id}` }
+    ]];
+  } else if (stageKey === "30") {
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 30% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
+    inline_keyboard = [[
+      { text: "Да, отправлю материал", callback_data: `stage_30_yes_${task.id}` },
+      { text: "Ещё нет", callback_data: `stage_30_no_${task.id}` }
+    ]];
+  } else if (stageKey === "60") {
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 60% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
+    inline_keyboard = [[
+      { text: "Да, отправлю материал", callback_data: `stage_60_yes_${task.id}` },
+      { text: "Ещё нет", callback_data: `stage_60_no_${task.id}` }
+    ]];
+  } else if (stageKey === "final") {
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВсё ли готово по задаче #${task.id}? Если да — отправь финальный материал ссылкой, текстом или файлом.`;
+    inline_keyboard = [[
+      { text: "Да, отправлю финал", callback_data: `stage_final_yes_${task.id}` },
+      { text: "Ещё нет", callback_data: `stage_final_no_${task.id}` }
+    ]];
+  }
+
+  sendMessage(task.assignedExecutorId, text, { inline_keyboard });
+}
+
 function startTaskCreation(chatId, from) {
   userStates.set(chatId, {
     type: "create_task",
@@ -437,7 +593,9 @@ function startTaskCreation(chatId, from) {
       managerUsername: from?.username || null,
       managerContact: getManagerContact(from),
       title: "",
-      category: "",
+      categories: [],
+      deadlineDate: "",
+      deadlineTime: "",
       deadline: "",
       price: "",
       brief: null,
@@ -450,6 +608,11 @@ function startTaskCreation(chatId, from) {
       assignedExecutorId: null,
       assignedExecutorName: null,
       assignedExecutorContact: null,
+      stageMaterials: {
+        thirty: null,
+        sixty: null,
+        final: null
+      },
       timeline: {
         assignedAt: null,
         briefReadAt: null,
@@ -469,6 +632,7 @@ function startTaskCreation(chatId, from) {
 }
 
 function finishTaskCreation(chatId, state) {
+  state.task.deadline = `${state.task.deadlineDate} ${state.task.deadlineTime}`;
   tasks.push(state.task);
   userStates.delete(chatId);
 
@@ -495,40 +659,107 @@ function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Название задачи лучше отправить текстом.");
       return;
     }
-    state.task.title = input.value;
-    state.step = "category";
-    sendMessage(chatId, "Введи категорию задачи: Статика, Моушен или Лендинги.");
-    return;
-  }
-
-  if (state.step === "category") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Категорию лучше отправить текстом.");
-      return;
-    }
-
-    const value = input.value.trim();
-    const normalized = SPECIALIZATION_OPTIONS.find(
-      item => item.toLowerCase() === value.toLowerCase()
+    state.task.title = input.value.trim();
+    state.step = "categories";
+    state.task.categories = [];
+    sendMessage(
+      chatId,
+      "Выбери категории задачи. Можно несколько. Потом нажми Готово.",
+      getDoneKeyboard(SPECIALIZATION_OPTIONS)
     );
-
-    if (!normalized) {
-      sendMessage(chatId, "Категория должна быть одной из трёх: Статика, Моушен, Лендинги.");
-      return;
-    }
-
-    state.task.category = normalized;
-    state.step = "deadline";
-    sendMessage(chatId, "Введи дедлайн. Например: сегодня до 18:00 или 16 марта 14:00.");
     return;
   }
 
-  if (state.step === "deadline") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Дедлайн лучше отправить текстом.");
+  if (state.step === "categories") {
+    if (text === "Готово") {
+      if (!state.task.categories.length) {
+        sendMessage(chatId, "Нужно выбрать хотя бы одну категорию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
+        return;
+      }
+
+      state.step = "deadline_date";
+      sendMessage(
+        chatId,
+        "Выбери дату дедлайна.",
+        getDateKeyboard()
+      );
       return;
     }
-    state.task.deadline = input.value;
+
+    if (!SPECIALIZATION_OPTIONS.includes(text)) {
+      sendMessage(chatId, "Выбери категорию кнопкой или нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
+      return;
+    }
+
+    if (!state.task.categories.includes(text)) {
+      state.task.categories.push(text);
+    }
+
+    sendMessage(
+      chatId,
+      `Выбрано: ${state.task.categories.join(", ")}`,
+      getDoneKeyboard(SPECIALIZATION_OPTIONS)
+    );
+    return;
+  }
+
+  if (state.step === "deadline_date") {
+    if (text === "Ввести дату вручную") {
+      state.step = "deadline_date_manual";
+      sendMessage(chatId, "Введи дату в формате YYYY-MM-DD. Например: 2026-03-16");
+      return;
+    }
+
+    if (DATE_OPTION_VALUES.hasOwnProperty(text)) {
+      const date = new Date();
+      date.setDate(date.getDate() + DATE_OPTION_VALUES[text]);
+      state.task.deadlineDate = date.toISOString().slice(0, 10);
+      state.step = "deadline_time";
+      sendMessage(chatId, "Выбери время дедлайна.", getTimeKeyboard());
+      return;
+    }
+
+    sendMessage(chatId, "Выбери дату кнопкой.", getDateKeyboard());
+    return;
+  }
+
+  if (state.step === "deadline_date_manual") {
+    if (!input || input.type !== "text" || !isValidManualDate(input.value)) {
+      sendMessage(chatId, "Нужен формат YYYY-MM-DD. Например: 2026-03-16");
+      return;
+    }
+
+    state.task.deadlineDate = input.value.trim();
+    state.step = "deadline_time";
+    sendMessage(chatId, "Выбери время дедлайна.", getTimeKeyboard());
+    return;
+  }
+
+  if (state.step === "deadline_time") {
+    if (text === "Ввести время вручную") {
+      state.step = "deadline_time_manual";
+      sendMessage(chatId, "Введи время в формате HH:MM. Например: 18:00");
+      return;
+    }
+
+    if (TIME_OPTIONS.includes(text)) {
+      state.task.deadlineTime = text;
+      state.step = "price";
+      sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
+      return;
+    }
+
+    sendMessage(chatId, "Выбери время кнопкой.", getTimeKeyboard());
+    return;
+  }
+
+  if (state.step === "deadline_time_manual") {
+    if (!input || input.type !== "text" || !isValidManualTime(input.value)) {
+      sendMessage(chatId, "Нужен формат HH:MM. Например: 18:00");
+      return;
+    }
+
+    state.task.deadlineTime = input.value.trim();
     state.step = "price";
     sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
     return;
@@ -539,7 +770,7 @@ function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Стоимость лучше отправить текстом.");
       return;
     }
-    state.task.price = input.value;
+    state.task.price = input.value.trim();
     state.step = "brief";
     sendMessage(chatId, "Отправь ТЗ. Это обязательное поле: можно текст, ссылку или файл.");
     return;
@@ -1112,10 +1343,10 @@ function handleManagerReviewStep(chatId, text, from, state) {
 }
 
 function publishTaskToExecutors(managerChatId, task) {
-  const candidates = getConfirmedExecutorsForCategory(task.category);
+  const candidates = getConfirmedExecutorsForCategories(task.categories);
 
   if (!candidates.length) {
-    sendMessage(managerChatId, `Нет подтверждённых исполнителей под категорию "${task.category}".`, getMainKeyboard(true));
+    sendMessage(managerChatId, `Нет подтверждённых исполнителей под выбранные категории "${formatCategories(task.categories)}".`, getMainKeyboard(true));
     return;
   }
 
@@ -1243,6 +1474,8 @@ function assignExecutorToTask(managerChatId, managerFromId, taskId, executorId) 
     `Исполнитель назначен на задачу #${task.id}.\n\n${formatTaskCard(task)}`,
     getManagerReviewTaskKeyboard(task.id)
   );
+
+  scheduleTaskReminder(task.id, "read");
 }
 
 function updateTaskStatusByExecutor(chatId, taskId, action) {
@@ -1264,6 +1497,8 @@ function updateTaskStatusByExecutor(chatId, taskId, action) {
 
     sendMessage(chatId, `Статус обновлён: ТЗ изучено.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
     sendMessage(task.managerId, `Исполнитель изучил ТЗ по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
+
+    scheduleTaskReminder(task.id, "inwork");
     return;
   }
 
@@ -1273,37 +1508,109 @@ function updateTaskStatusByExecutor(chatId, taskId, action) {
 
     sendMessage(chatId, `Статус обновлён: В работе.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
     sendMessage(task.managerId, `Исполнитель взял задачу #${task.id} в работу.`, getManagerReviewTaskKeyboard(task.id));
+
+    scheduleTaskReminder(task.id, "30");
     return;
   }
 
-  if (action === "Показать 30%" && task.status === "В работе") {
-    task.status = "30%";
-    task.timeline.shown30At = new Date().toISOString();
-
-    sendMessage(chatId, `Статус обновлён: 30%.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
-    sendMessage(task.managerId, `Исполнитель отметил этап 30% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    return;
-  }
-
-  if (action === "Показать 60%" && task.status === "30%") {
-    task.status = "60%";
-    task.timeline.shown60At = new Date().toISOString();
-
-    sendMessage(chatId, `Статус обновлён: 60%.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
-    sendMessage(task.managerId, `Исполнитель отметил этап 60% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    return;
-  }
-
-  if (action === "Сдать задачу" && task.status === "60%") {
+  if (action === "Сдать задачу" && task.status === "Правки") {
     task.status = "На проверке";
     task.timeline.submittedAt = new Date().toISOString();
 
-    sendMessage(chatId, `Задача отправлена на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
-    sendMessage(task.managerId, `Исполнитель сдал задачу #${task.id} на проверку.`, getManagerReviewTaskKeyboard(task.id));
+    sendMessage(chatId, `Исправленная задача отправлена на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(task.managerId, `Исполнитель повторно сдал задачу #${task.id} после правок.`, getManagerReviewTaskKeyboard(task.id));
     return;
   }
 
   sendMessage(chatId, "Это действие сейчас недоступно для текущего статуса задачи.");
+}
+
+function startStageMaterialCollection(chatId, taskId, stageKey) {
+  const task = tasks.find(t => t.id === taskId);
+
+  if (!task) {
+    sendMessage(chatId, "Задача не найдена.");
+    return;
+  }
+
+  if (task.assignedExecutorId !== chatId) {
+    sendMessage(chatId, "Эта задача назначена не тебе.");
+    return;
+  }
+
+  let prompt = "";
+  if (stageKey === "30") prompt = "Пришли материал для этапа 30%: ссылку, текст или файл.";
+  if (stageKey === "60") prompt = "Пришли материал для этапа 60%: ссылку, текст или файл.";
+  if (stageKey === "final") prompt = "Пришли финальный материал: ссылку, текст или файл.";
+
+  userStates.set(chatId, {
+    type: "task_stage_material",
+    step: "await_material",
+    taskId,
+    stageKey
+  });
+
+  sendMessage(chatId, prompt);
+}
+
+function handleTaskStageMaterial(chatId, message, state) {
+  const task = tasks.find(t => t.id === state.taskId);
+  const input = extractInput(message);
+
+  if (!task) {
+    userStates.delete(chatId);
+    sendMessage(chatId, "Задача не найдена.");
+    return;
+  }
+
+  if (!input) {
+    sendMessage(chatId, "Нужен текст, ссылка или файл.");
+    return;
+  }
+
+  if (state.stageKey === "30") {
+    task.status = "30%";
+    task.timeline.shown30At = new Date().toISOString();
+    task.stageMaterials.thirty = input;
+    userStates.delete(chatId);
+
+    sendMessage(chatId, `Материал 30% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(task.managerId, `Исполнитель отправил этап 30% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Материал 30% по задаче #${task.id}`);
+    else sendMessage(task.managerId, `Материал 30%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+
+    scheduleTaskReminder(task.id, "60");
+    return;
+  }
+
+  if (state.stageKey === "60") {
+    task.status = "60%";
+    task.timeline.shown60At = new Date().toISOString();
+    task.stageMaterials.sixty = input;
+    userStates.delete(chatId);
+
+    sendMessage(chatId, `Материал 60% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(task.managerId, `Исполнитель отправил этап 60% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Материал 60% по задаче #${task.id}`);
+    else sendMessage(task.managerId, `Материал 60%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+
+    scheduleTaskReminder(task.id, "final");
+    return;
+  }
+
+  if (state.stageKey === "final") {
+    task.status = "На проверке";
+    task.timeline.submittedAt = new Date().toISOString();
+    task.stageMaterials.final = input;
+    userStates.delete(chatId);
+
+    sendMessage(chatId, `Финальный материал отправлен на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(task.managerId, `Исполнитель сдал задачу #${task.id} на проверку.`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Финальный материал по задаче #${task.id}`);
+    else sendMessage(task.managerId, `Финальный материал:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+
+    clearTaskReminder(task.id);
+  }
 }
 
 function managerApproveTask(chatId, managerId, taskId) {
@@ -1315,6 +1622,7 @@ function managerApproveTask(chatId, managerId, taskId) {
 
   task.status = "Выполнена";
   task.timeline.approvedAt = new Date().toISOString();
+  clearTaskReminder(task.id);
 
   sendMessage(chatId, `Результат по задаче #${task.id} принят.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
   sendMessage(task.assignedExecutorId, `Менеджер принял результат по задаче #${task.id}.`, getMainKeyboard(false, true));
@@ -1329,9 +1637,12 @@ function managerSendFixes(chatId, managerId, taskId) {
 
   task.status = "Правки";
   task.timeline.returnedForFixesAt = new Date().toISOString();
+  clearTaskReminder(task.id);
 
   sendMessage(chatId, `Задача #${task.id} отправлена на правки.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
-  sendMessage(task.assignedExecutorId, `По задаче #${task.id} пришли правки. Свяжись с менеджером: ${task.managerContact}`, getMainKeyboard(false, true));
+  sendMessage(task.assignedExecutorId, `По задаче #${task.id} пришли правки. Свяжись с менеджером: ${task.managerContact}`, getExecutorTaskActionKeyboard(task));
+
+  scheduleTaskReminder(task.id, "final");
 }
 
 function managerMarkUnpaid(chatId, managerId, taskId) {
@@ -1389,6 +1700,11 @@ function handleTextMessage(chatId, text, from, message) {
 
   if (state?.type === "manager_review_executor") {
     handleManagerReviewStep(chatId, text, from, state);
+    return;
+  }
+
+  if (state?.type === "task_stage_material") {
+    handleTaskStageMaterial(chatId, message, state);
     return;
   }
 
@@ -1467,7 +1783,7 @@ function handleTextMessage(chatId, text, from, message) {
     const relevantTasks = tasks.filter(task => {
       return (
         task.status === "Ждёт исполнителя" &&
-        executorProfile.verifiedSpecializations?.includes(task.category)
+        executorProfile.verifiedSpecializations?.some(spec => task.categories.includes(spec))
       );
     });
 
@@ -1477,7 +1793,7 @@ function handleTextMessage(chatId, text, from, message) {
     }
 
     const summary = relevantTasks
-      .map(task => `#${task.id} — ${task.title} | ${task.category} | ${task.deadline} | ${task.price}`)
+      .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.deadline} | ${task.price}`)
       .join("\n");
 
     sendMessage(chatId, `Новые задачи:\n\n${summary}`, getMainKeyboard(false, true));
@@ -1560,7 +1876,7 @@ function handleTextMessage(chatId, text, from, message) {
       }
 
       const summary = managerTasks
-        .map(task => `#${task.id} — ${task.title} | ${task.category} | ${task.status} | отклики: ${task.responses?.length || 0}`)
+        .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.status} | отклики: ${task.responses?.length || 0}`)
         .join("\n");
 
       sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
@@ -1598,30 +1914,69 @@ function handleCallbackQuery(callbackQuery) {
 
     if (!managers.has(from.id)) {
       sendMessage(chatId, "Назначать исполнителя может только менеджер.");
-      sendTelegramRequest("answerCallbackQuery", {
-        callback_query_id: callbackQuery.id,
-        text: "Недостаточно прав"
-      });
+      answerCallback(callbackQuery.id, "Недостаточно прав");
       return;
     }
 
     assignExecutorToTask(chatId, from.id, taskId, executorId);
-
-    sendTelegramRequest("answerCallbackQuery", {
-      callback_query_id: callbackQuery.id,
-      text: "Исполнитель назначен"
-    });
+    answerCallback(callbackQuery.id, "Исполнитель назначен");
     return;
+  }
+
+  if (data.startsWith("stage_")) {
+    const parts = data.split("_");
+    // stage read yes 12
+    const stageKey = parts[1];
+    const answer = parts[2];
+    const taskId = Number(parts[3]);
+    const task = tasks.find(t => t.id === taskId);
+
+    if (!task || task.assignedExecutorId !== from.id) {
+      answerCallback(callbackQuery.id, "Задача не найдена");
+      return;
+    }
+
+    if (answer === "no") {
+      answerCallback(callbackQuery.id, "Ок");
+      return;
+    }
+
+    if (stageKey === "read") {
+      updateTaskStatusByExecutor(from.id, taskId, "Изучил ТЗ");
+      answerCallback(callbackQuery.id, "Отмечено");
+      return;
+    }
+
+    if (stageKey === "inwork") {
+      updateTaskStatusByExecutor(from.id, taskId, "Взял в работу");
+      answerCallback(callbackQuery.id, "Отмечено");
+      return;
+    }
+
+    if (stageKey === "30") {
+      startStageMaterialCollection(from.id, taskId, "30");
+      answerCallback(callbackQuery.id, "Жду материал");
+      return;
+    }
+
+    if (stageKey === "60") {
+      startStageMaterialCollection(from.id, taskId, "60");
+      answerCallback(callbackQuery.id, "Жду материал");
+      return;
+    }
+
+    if (stageKey === "final") {
+      startStageMaterialCollection(from.id, taskId, "final");
+      answerCallback(callbackQuery.id, "Жду финал");
+      return;
+    }
   }
 
   const executor = executors.get(from.id);
 
   if (!executor || executor.status !== "Подтверждён") {
     sendMessage(chatId, "Откликаться на задачи могут только подтверждённые исполнители.");
-    sendTelegramRequest("answerCallbackQuery", {
-      callback_query_id: callbackQuery.id,
-      text: "Нет доступа"
-    });
+    answerCallback(callbackQuery.id, "Нет доступа");
     return;
   }
 
@@ -1631,20 +1986,14 @@ function handleCallbackQuery(callbackQuery) {
 
   if (!task) {
     sendMessage(chatId, "Задача не найдена.");
-    sendTelegramRequest("answerCallbackQuery", {
-      callback_query_id: callbackQuery.id,
-      text: "Задача не найдена"
-    });
+    answerCallback(callbackQuery.id, "Задача не найдена");
     return;
   }
 
   const existingResponse = task.responses.find(item => item.executorId === from.id);
   if (existingResponse) {
     sendMessage(chatId, "Ты уже ответил на эту задачу.");
-    sendTelegramRequest("answerCallbackQuery", {
-      callback_query_id: callbackQuery.id,
-      text: "Ты уже ответил"
-    });
+    answerCallback(callbackQuery.id, "Ты уже ответил");
     return;
   }
 
@@ -1679,10 +2028,7 @@ function handleCallbackQuery(callbackQuery) {
     getMainKeyboard(true)
   );
 
-  sendTelegramRequest("answerCallbackQuery", {
-    callback_query_id: callbackQuery.id,
-    text: `Сохранено: ${decision}`
-  });
+  answerCallback(callbackQuery.id, `Сохранено: ${decision}`);
 }
 
 const server = http.createServer((req, res) => {
