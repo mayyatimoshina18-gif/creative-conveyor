@@ -93,6 +93,7 @@ function getMainKeyboard(isManager = false, isExecutorRegistered = false) {
       keyboard: [
         [{ text: "Создать задачу" }],
         [{ text: "Мои задачи" }],
+        [{ text: "Отклики последней задачи" }],
         [{ text: "Заявки в исполнители" }],
         [{ text: "Я исполнитель" }]
       ],
@@ -162,6 +163,7 @@ function getTaskAfterCreateKeyboard() {
   return {
     keyboard: [
       [{ text: "Опубликовать последнюю задачу" }],
+      [{ text: "Отклики последней задачи" }],
       [{ text: "Мои задачи" }],
       [{ text: "В меню менеджера" }]
     ],
@@ -214,6 +216,10 @@ function formatField(field, label = "Материал") {
 }
 
 function formatTaskCard(task) {
+  const assignedLine = task.assignedExecutorName
+    ? `Исполнитель: ${task.assignedExecutorName} (${task.assignedExecutorContact || "—"})`
+    : `Исполнитель: —`;
+
   return [
     `Задача #${task.id}`,
     ``,
@@ -222,6 +228,7 @@ function formatTaskCard(task) {
     `Дедлайн: ${task.deadline || "—"}`,
     `Стоимость: ${task.price || "—"}`,
     `Статус: ${task.status || "—"}`,
+    `${assignedLine}`,
     ``,
     `ТЗ:`,
     `${formatField(task.brief, "ТЗ")}`,
@@ -318,6 +325,15 @@ function isValidUnavailableTime(value) {
   return lines.every(line => regex.test(line));
 }
 
+function getResponseRecommendation(executor) {
+  const rating = typeof executor.rating === "number" ? executor.rating : 0;
+
+  if (rating >= 95) return { label: "Очень рекомендуется", score: rating + 5 };
+  if (rating >= 85) return { label: "Рекомендуется", score: rating + 3 };
+  if (rating >= 75) return { label: "Подходит", score: rating + 1 };
+  return { label: "Ниже приоритета", score: rating };
+}
+
 function startTaskCreation(chatId, from) {
   userStates.set(chatId, {
     type: "create_task",
@@ -338,7 +354,10 @@ function startTaskCreation(chatId, from) {
       comment: null,
       status: "Создана",
       responses: [],
-      publishedAt: null
+      publishedAt: null,
+      assignedExecutorId: null,
+      assignedExecutorName: null,
+      assignedExecutorContact: null
     }
   });
 
@@ -1008,14 +1027,115 @@ function getLastManagerTask(managerId) {
   return managerTasks[managerTasks.length - 1];
 }
 
-function formatResponses(task) {
-  if (!task.responses?.length) return "Откликов пока нет.";
+function getAcceptedResponses(task) {
+  return (task.responses || []).filter(item => item.decision === "Принял");
+}
 
-  return task.responses
-    .map((response, index) => {
-      return `${index + 1}. ${response.executorName} (${response.executorContact}) — ${response.decision}`;
-    })
-    .join("\n");
+function showResponsesForTask(managerChatId, task) {
+  const accepted = getAcceptedResponses(task);
+
+  if (!accepted.length) {
+    sendMessage(
+      managerChatId,
+      `По задаче #${task.id} пока нет принятых откликов.`,
+      getMainKeyboard(true)
+    );
+    return;
+  }
+
+  sendMessage(
+    managerChatId,
+    `Отклики по задаче #${task.id}:\n${task.title}\n\nВыбери, кого назначить.`,
+    getMainKeyboard(true)
+  );
+
+  for (const response of accepted) {
+    const found = findExecutorByTelegramId(response.executorId);
+    const executor = found?.profile || executors.get(response.executorId);
+    const recommendation = getResponseRecommendation(executor || { rating: 0 });
+
+    const text = [
+      `Исполнитель: ${response.executorName}`,
+      `Контакт: ${response.executorContact}`,
+      `Рейтинг: ${typeof executor?.rating === "number" ? executor.rating : "—"}`,
+      `Рекомендация системы: ${recommendation.label}`,
+      `Скоринг рекомендации: ${recommendation.score}`
+    ].join("\n");
+
+    const inlineKeyboard = {
+      inline_keyboard: [
+        [{ text: "Назначить", callback_data: `assign_${task.id}_${response.executorId}` }]
+      ]
+    };
+
+    sendMessage(managerChatId, text, inlineKeyboard);
+  }
+}
+
+function assignExecutorToTask(managerChatId, managerFromId, taskId, executorId) {
+  const task = tasks.find(item => item.id === taskId);
+
+  if (!task) {
+    sendMessage(managerChatId, "Задача не найдена.", getMainKeyboard(true));
+    return;
+  }
+
+  if (task.managerId !== managerFromId) {
+    sendMessage(managerChatId, "Нельзя назначать исполнителя на чужую задачу.", getMainKeyboard(true));
+    return;
+  }
+
+  const accepted = getAcceptedResponses(task);
+  const selectedResponse = accepted.find(item => item.executorId === executorId);
+
+  if (!selectedResponse) {
+    sendMessage(managerChatId, "Этот исполнитель не найден среди принятых откликов.", getMainKeyboard(true));
+    return;
+  }
+
+  const executor = executors.get(executorId);
+  if (!executor) {
+    sendMessage(managerChatId, "Профиль исполнителя не найден.", getMainKeyboard(true));
+    return;
+  }
+
+  task.assignedExecutorId = executorId;
+  task.assignedExecutorName = selectedResponse.executorName;
+  task.assignedExecutorContact = selectedResponse.executorContact;
+  task.status = "Назначена";
+  task.assignedAt = new Date().toISOString();
+
+  sendMessage(
+    executorId,
+    `Тебе назначена задача.\n\n${formatTaskCard(task)}`,
+    getMainKeyboard(false, true)
+  );
+
+  if (task.brief?.type === "document") {
+    sendDocument(executorId, task.brief.file_id, "Файл ТЗ");
+  }
+  if (task.sources?.type === "document") {
+    sendDocument(executorId, task.sources.file_id, "Файл с источниками");
+  }
+  if (task.references?.type === "document") {
+    sendDocument(executorId, task.references.file_id, "Файл с референсами");
+  }
+
+  for (const response of accepted) {
+    if (response.executorId !== executorId) {
+      sendMessage(
+        response.executorId,
+        `По задаче #${task.id} выбран другой исполнитель. Спасибо за отклик.`,
+        getMainKeyboard(false, true)
+      );
+    }
+  }
+
+  sendMessage(
+    managerChatId,
+    `Исполнитель назначен на задачу #${task.id}.\n\n${formatTaskCard(task)}`,
+    getMainKeyboard(true)
+  );
 }
 
 function handleTextMessage(chatId, text, from, message) {
@@ -1160,6 +1280,17 @@ function handleTextMessage(chatId, text, from, message) {
       return;
     }
 
+    if (text === "Отклики последней задачи") {
+      const task = getLastManagerTask(from?.id);
+      if (!task) {
+        sendMessage(chatId, "У тебя пока нет задач.", getMainKeyboard(true));
+        return;
+      }
+
+      showResponsesForTask(chatId, task);
+      return;
+    }
+
     if (text === "Мои задачи") {
       const managerTasks = tasks.filter(task => task.managerId === from?.id);
 
@@ -1190,7 +1321,7 @@ function handleTextMessage(chatId, text, from, message) {
         return;
       }
 
-      sendMessage(chatId, `Отклики по задаче #${task.id}:\n\n${formatResponses(task)}`, getMainKeyboard(true));
+      showResponsesForTask(chatId, task);
       return;
     }
 
@@ -1213,10 +1344,37 @@ function handleCallbackQuery(callbackQuery) {
 
   if (!chatId || !data) return;
 
+  if (data.startsWith("assign_")) {
+    const parts = data.split("_");
+    const taskId = Number(parts[1]);
+    const executorId = Number(parts[2]);
+
+    if (!managers.has(from.id)) {
+      sendMessage(chatId, "Назначать исполнителя может только менеджер.");
+      sendTelegramRequest("answerCallbackQuery", {
+        callback_query_id: callbackQuery.id,
+        text: "Недостаточно прав"
+      });
+      return;
+    }
+
+    assignExecutorToTask(chatId, from.id, taskId, executorId);
+
+    sendTelegramRequest("answerCallbackQuery", {
+      callback_query_id: callbackQuery.id,
+      text: "Исполнитель назначен"
+    });
+    return;
+  }
+
   const executor = executors.get(from.id);
 
   if (!executor || executor.status !== "Подтверждён") {
     sendMessage(chatId, "Откликаться на задачи могут только подтверждённые исполнители.");
+    sendTelegramRequest("answerCallbackQuery", {
+      callback_query_id: callbackQuery.id,
+      text: "Нет доступа"
+    });
     return;
   }
 
@@ -1226,12 +1384,20 @@ function handleCallbackQuery(callbackQuery) {
 
   if (!task) {
     sendMessage(chatId, "Задача не найдена.");
+    sendTelegramRequest("answerCallbackQuery", {
+      callback_query_id: callbackQuery.id,
+      text: "Задача не найдена"
+    });
     return;
   }
 
   const existingResponse = task.responses.find(item => item.executorId === from.id);
   if (existingResponse) {
     sendMessage(chatId, "Ты уже ответил на эту задачу.");
+    sendTelegramRequest("answerCallbackQuery", {
+      callback_query_id: callbackQuery.id,
+      text: "Ты уже ответил"
+    });
     return;
   }
 
@@ -1254,7 +1420,7 @@ function handleCallbackQuery(callbackQuery) {
   });
   executors.set(from.id, executor);
 
-  if (task.responses.length > 0 && task.status === "Ждёт исполнителя") {
+  if (getAcceptedResponses(task).length > 0 && task.status === "Ждёт исполнителя") {
     task.status = "Есть отклики";
   }
 
