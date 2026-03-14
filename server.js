@@ -275,6 +275,49 @@ function calculateNewcomerBoost(baseRating) {
   return 5;
 }
 
+function isValidFullName(value) {
+  if (!value) return false;
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  return parts.length >= 2 && parts.every(part => part.length >= 2);
+}
+
+function normalizePhone(value) {
+  return value.replace(/[^\d+]/g, "");
+}
+
+function normalizeCard(value) {
+  return value.replace(/\D/g, "");
+}
+
+function isValidPhone(value) {
+  const normalized = normalizePhone(value);
+  return /^(\+7\d{10}|8\d{10})$/.test(normalized);
+}
+
+function isValidCard(value) {
+  const normalized = normalizeCard(value);
+  return /^\d{16}$/.test(normalized);
+}
+
+function isValidTransferDetails(value) {
+  return isValidPhone(value) || isValidCard(value);
+}
+
+function isValidUnavailableTime(value) {
+  if (!value || !value.trim()) return false;
+  const lines = value
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return false;
+
+  const dayPattern = DAY_OPTIONS.join("|");
+  const regex = new RegExp(`^(${dayPattern})\\s\\d{2}:\\d{2}-\\d{2}:\\d{2}$`);
+
+  return lines.every(line => regex.test(line));
+}
+
 function startTaskCreation(chatId, from) {
   userStates.set(chatId, {
     type: "create_task",
@@ -385,12 +428,17 @@ function handleTaskCreationStep(chatId, message, state) {
     }
     state.task.price = input.value;
     state.step = "brief";
-    sendMessage(chatId, "Отправь ТЗ. Можно текст, ссылку или файл.", getSkipKeyboard());
+    sendMessage(chatId, "Отправь ТЗ. Это обязательное поле: можно текст, ссылку или файл.");
     return;
   }
 
   if (state.step === "brief") {
-    state.task.brief = text === "Пропустить" ? null : input;
+    if (!input) {
+      sendMessage(chatId, "ТЗ обязательно. Отправь текст, ссылку или файл.");
+      return;
+    }
+
+    state.task.brief = input;
     state.step = "sources";
     sendMessage(chatId, "Отправь источники. Можно текст, ссылку или файл. Это поле необязательное.", getSkipKeyboard());
     return;
@@ -459,7 +507,7 @@ function startExecutorRegistration(chatId, from, existing = null) {
     }
   });
 
-  sendMessage(chatId, "Введи своё имя и фамилию.");
+  sendMessage(chatId, "Введи имя и фамилию. Формат: Имя Фамилия");
 }
 
 function notifyManagersAboutExecutor(profile) {
@@ -525,7 +573,13 @@ function handleExecutorRegistrationStep(chatId, message, state) {
       sendMessage(chatId, "Имя лучше отправить текстом.");
       return;
     }
-    state.profile.fullName = input.value;
+
+    if (!isValidFullName(input.value)) {
+      sendMessage(chatId, "Нужно ввести минимум имя и фамилию. Формат: Имя Фамилия");
+      return;
+    }
+
+    state.profile.fullName = input.value.trim();
     state.step = "specializations";
     state.profile.specializations = [];
     sendMessage(chatId, "Выбери специализации. Можно несколько. Нажимай кнопки по одной, потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
@@ -538,6 +592,7 @@ function handleExecutorRegistrationStep(chatId, message, state) {
         sendMessage(chatId, "Нужно выбрать хотя бы одну специализацию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
         return;
       }
+
       state.step = "portfolio";
       sendMessage(chatId, "Пришли ссылку на портфолио. Подойдёт любое портфолио, не обязательно по баннерам. Поле можно пропустить.", getSkipKeyboard());
       return;
@@ -581,7 +636,10 @@ function handleExecutorRegistrationStep(chatId, message, state) {
 
     if (text === "Переводом") {
       state.step = "payment_details_transfer";
-      sendMessage(chatId, "Введи номер телефона или карты для выплаты.");
+      sendMessage(
+        chatId,
+        "Введи номер телефона или карты для выплаты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
+      );
       return;
     }
 
@@ -593,6 +651,14 @@ function handleExecutorRegistrationStep(chatId, message, state) {
   if (state.step === "payment_details_transfer") {
     if (!input || input.type !== "text") {
       sendMessage(chatId, "Реквизиты лучше отправить текстом.");
+      return;
+    }
+
+    if (!isValidTransferDetails(input.value)) {
+      sendMessage(
+        chatId,
+        "Нужен корректный номер телефона или карты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
+      );
       return;
     }
 
@@ -635,7 +701,11 @@ function handleExecutorRegistrationStep(chatId, message, state) {
   if (state.step === "unavailable_days") {
     if (text === "Готово") {
       state.step = "unavailable_time";
-      sendMessage(chatId, "Если есть временные промежутки, когда ты не можешь брать задачи, напиши их текстом. Например: по будням с 10:00 до 14:00. Если ограничений нет — нажми Пропустить.", getSkipKeyboard());
+      sendMessage(
+        chatId,
+        "Если есть временные промежутки, когда ты не можешь брать задачи, введи по одной строке в таком формате:\nВторник 10:00-14:00\nСреда 18:00-22:00\nЕсли ограничений нет — нажми Пропустить.",
+        getSkipKeyboard()
+      );
       return;
     }
 
@@ -656,7 +726,15 @@ function handleExecutorRegistrationStep(chatId, message, state) {
     if (text === "Пропустить") {
       state.profile.unavailableTime = "";
     } else if (input?.type === "text") {
-      state.profile.unavailableTime = input.value;
+      if (!isValidUnavailableTime(input.value)) {
+        sendMessage(
+          chatId,
+          "Неверный формат времени.\nВводи по одной строке так:\nВторник 10:00-14:00\nСреда 18:00-22:00",
+          getSkipKeyboard()
+        );
+        return;
+      }
+      state.profile.unavailableTime = input.value.trim();
     } else {
       sendMessage(chatId, "Напиши время текстом или нажми Пропустить.", getSkipKeyboard());
       return;
@@ -883,11 +961,7 @@ function publishTaskToExecutors(managerChatId, task) {
   const candidates = getConfirmedExecutorsForCategory(task.category);
 
   if (!candidates.length) {
-    sendMessage(
-      managerChatId,
-      `Нет подтверждённых исполнителей под категорию "${task.category}".`,
-      getMainKeyboard(true)
-    );
+    sendMessage(managerChatId, `Нет подтверждённых исполнителей под категорию "${task.category}".`, getMainKeyboard(true));
     return;
   }
 
