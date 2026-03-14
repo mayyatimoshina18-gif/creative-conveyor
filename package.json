@@ -1,0 +1,9 @@
+{
+  "name": "creative-conveyor",
+  "version": "1.0.0",
+  "description": "Telegram bot and mini app backend for Creative Conveyor",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
