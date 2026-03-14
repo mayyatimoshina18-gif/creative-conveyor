@@ -125,7 +125,7 @@ function startTaskCreation(chatId, from) {
   sendMessage(chatId, "Введи название задачи.");
 }
 
-function formatField(field) {
+function formatField(field, label = "Материал") {
   if (!field) return "—";
 
   if (field.type === "text") {
@@ -133,7 +133,11 @@ function formatField(field) {
   }
 
   if (field.type === "document") {
-    return `Файл: ${field.file_name || "без имени"}\nfile_id: ${field.file_id}${field.caption ? `\nКомментарий: ${field.caption}` : ""}`;
+    if (field.caption && field.caption.trim()) {
+      return `${label} прикреплено файлом.\nКомментарий: ${field.caption}`;
+    }
+
+    return `${label} прикреплено файлом.`;
   }
 
   return "—";
@@ -148,13 +152,13 @@ function formatTaskCard(task) {
     `Стоимость: ${task.price || "—"}`,
     ``,
     `ТЗ:`,
-    `${formatField(task.brief)}`,
+    `${formatField(task.brief, "ТЗ")}`,
     ``,
     `Источники:`,
-    `${formatField(task.sources)}`,
+    `${formatField(task.sources, "Источники")}`,
     ``,
     `Референсы:`,
-    `${formatField(task.references)}`,
+    `${formatField(task.references, "Референсы")}`,
     ``,
     `Комментарий:`,
     `${task.comment || "—"}`,
@@ -172,6 +176,30 @@ function finishTaskCreation(chatId, state) {
     `Задача создана.\n\n${formatTaskCard(state.task)}`,
     getMainKeyboard(true)
   );
+
+  if (state.task.brief?.type === "document") {
+    sendTelegramRequest("sendDocument", {
+      chat_id: chatId,
+      document: state.task.brief.file_id,
+      caption: "Файл ТЗ"
+    });
+  }
+
+  if (state.task.sources?.type === "document") {
+    sendTelegramRequest("sendDocument", {
+      chat_id: chatId,
+      document: state.task.sources.file_id,
+      caption: "Файл с источниками"
+    });
+  }
+
+  if (state.task.references?.type === "document") {
+    sendTelegramRequest("sendDocument", {
+      chat_id: chatId,
+      document: state.task.references.file_id,
+      caption: "Файл с референсами"
+    });
+  }
 }
 
 function extractInput(message) {
@@ -199,13 +227,13 @@ function handleTaskCreationStep(chatId, message, state) {
   const text = message.text;
   const input = extractInput(message);
 
-  if (!input) {
+  if (!input && text !== "Пропустить") {
     sendMessage(chatId, "Не удалось прочитать сообщение. Отправь текст, ссылку или файл.");
     return;
   }
 
   if (state.step === "title") {
-    if (input.type !== "text") {
+    if (!input || input.type !== "text") {
       sendMessage(chatId, "Название задачи лучше отправить текстом.");
       return;
     }
@@ -217,7 +245,7 @@ function handleTaskCreationStep(chatId, message, state) {
   }
 
   if (state.step === "deadline") {
-    if (input.type !== "text") {
+    if (!input || input.type !== "text") {
       sendMessage(chatId, "Дедлайн лучше отправить текстом.");
       return;
     }
@@ -229,7 +257,7 @@ function handleTaskCreationStep(chatId, message, state) {
   }
 
   if (state.step === "price") {
-    if (input.type !== "text") {
+    if (!input || input.type !== "text") {
       sendMessage(chatId, "Стоимость лучше отправить текстом.");
       return;
     }
@@ -295,10 +323,14 @@ function handleTaskCreationStep(chatId, message, state) {
   if (state.step === "comment") {
     if (text === "Пропустить") {
       state.task.comment = null;
-    } else if (input.type === "text") {
+    } else if (input?.type === "text") {
       state.task.comment = input.value;
+    } else if (input?.type === "document") {
+      state.task.comment = input.caption?.trim()
+        ? `Комментарий к файлу: ${input.caption}`
+        : "Комментарий приложен файлом.";
     } else {
-      state.task.comment = `Файл: ${input.file_name || "без имени"}${input.caption ? ` | ${input.caption}` : ""}`;
+      state.task.comment = null;
     }
 
     finishTaskCreation(chatId, state);
