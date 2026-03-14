@@ -93,6 +93,7 @@ function getMainKeyboard(isManager = false, isExecutorRegistered = false) {
       keyboard: [
         [{ text: "Создать задачу" }],
         [{ text: "Мои задачи" }],
+        [{ text: "Заявки в исполнители" }],
         [{ text: "Я исполнитель" }]
       ],
       resize_keyboard: true
@@ -143,15 +144,22 @@ function getPaymentKeyboard() {
   };
 }
 
+function getModerationKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "Подтвердить исполнителя" }],
+      [{ text: "Отклонить исполнителя" }],
+      [{ text: "Следующая заявка" }],
+      [{ text: "В меню менеджера" }]
+    ],
+    resize_keyboard: true
+  };
+}
+
 function getManagerContact(from) {
   if (from?.username) return `@${from.username}`;
   if (from?.first_name) return `${from.first_name} (id: ${from.id})`;
   return `id: ${from?.id || "unknown"}`;
-}
-
-function getExecutorContact(profile) {
-  if (profile.username) return `@${profile.username}`;
-  return `id: ${profile.telegramId}`;
 }
 
 function extractInput(message) {
@@ -215,6 +223,18 @@ function formatTaskCard(task) {
     ``,
     `Менеджер: ${task.managerContact}`
   ].join("\n");
+}
+
+function calculateBaseRating(accuracy, speed, aesthetics) {
+  const startScore = accuracy * 0.4 + speed * 0.4 + aesthetics * 0.2;
+  return Math.round(startScore * 20);
+}
+
+function calculateNewcomerBoost(baseRating) {
+  if (baseRating >= 85) return 8;
+  if (baseRating >= 75) return 7;
+  if (baseRating >= 65) return 6;
+  return 5;
 }
 
 function startTaskCreation(chatId, from) {
@@ -372,6 +392,7 @@ function startExecutorRegistration(chatId, from, existing = null) {
       telegramContact: from?.username ? `@${from.username}` : `id: ${from?.id || "unknown"}`,
       fullName: existing?.fullName || "",
       specializations: existing?.specializations || [],
+      verifiedSpecializations: existing?.verifiedSpecializations || [],
       portfolio: existing?.portfolio || null,
       paymentMethod: existing?.paymentMethod || "",
       paymentDetails: existing?.paymentDetails || null,
@@ -381,6 +402,12 @@ function startExecutorRegistration(chatId, from, existing = null) {
       status: existing?.status || "На модерации",
       approvedBy: existing?.approvedBy || null,
       approvedByManagerId: existing?.approvedByManagerId || null,
+      reviewAccuracy: typeof existing?.reviewAccuracy === "number" ? existing.reviewAccuracy : null,
+      reviewSpeed: typeof existing?.reviewSpeed === "number" ? existing.reviewSpeed : null,
+      reviewAesthetics: typeof existing?.reviewAesthetics === "number" ? existing.reviewAesthetics : null,
+      baseRating: typeof existing?.baseRating === "number" ? existing.baseRating : null,
+      newcomerBoost: typeof existing?.newcomerBoost === "number" ? existing.newcomerBoost : null,
+      rating: typeof existing?.rating === "number" ? existing.rating : null,
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }
@@ -396,13 +423,20 @@ function formatExecutorProfile(profile) {
     `Имя: ${profile.fullName || "—"}`,
     `Контакт: ${profile.telegramContact || "—"}`,
     `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
+    `Подтверждённые специализации: ${profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : "—"}`,
     `Портфолио: ${profile.portfolio || "—"}`,
     `Способ выплаты: ${profile.paymentMethod || "—"}`,
     `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
     `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
     `Недоступное время: ${profile.unavailableTime || "—"}`,
     `Статус: ${profile.status || "—"}`,
-    `Подтвердил менеджер: ${profile.approvedBy || "—"}`
+    `Подтвердил менеджер: ${profile.approvedBy || "—"}`,
+    `Оценка по ТЗ: ${typeof profile.reviewAccuracy === "number" ? profile.reviewAccuracy : "—"}`,
+    `Оценка скорости: ${typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : "—"}`,
+    `Оценка эстетики: ${typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : "—"}`,
+    `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
+    `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
+    `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
   ].join("\n");
 }
 
@@ -437,6 +471,16 @@ function notifyManagersAboutExecutor(profile) {
 function finishExecutorRegistration(chatId, state) {
   state.profile.updatedAt = new Date().toISOString();
   state.profile.status = "На модерации";
+  state.profile.approvedBy = null;
+  state.profile.approvedByManagerId = null;
+  state.profile.verifiedSpecializations = [];
+  state.profile.reviewAccuracy = null;
+  state.profile.reviewSpeed = null;
+  state.profile.reviewAesthetics = null;
+  state.profile.baseRating = null;
+  state.profile.newcomerBoost = null;
+  state.profile.rating = null;
+
   executors.set(chatId, state.profile);
   userStates.delete(chatId);
 
@@ -532,19 +576,14 @@ function handleExecutorRegistrationStep(chatId, message, state) {
 
     if (text === "Переводом") {
       state.step = "payment_details_transfer";
-      sendMessage(
-        chatId,
-        "Введи номер телефона или карты для выплаты.",
-        null
-      );
+      sendMessage(chatId, "Введи номер телефона или карты для выплаты.");
       return;
     }
 
     state.step = "payment_details_business";
     sendMessage(
       chatId,
-      `Введи реквизиты для ${text}. Потом отдельным сообщением можно будет приложить файл.`,
-      null
+      `Введи реквизиты для ${text}. Потом отдельным сообщением можно будет приложить файл.`
     );
     return;
   }
@@ -645,6 +684,229 @@ function handleExecutorRegistrationStep(chatId, message, state) {
   }
 }
 
+function getPendingExecutors() {
+  return Array.from(executors.values()).filter(profile => profile.status === "На модерации");
+}
+
+function findExecutorByTelegramId(telegramId) {
+  for (const [chatId, profile] of executors.entries()) {
+    if (profile.telegramId === telegramId) {
+      return { chatId, profile };
+    }
+  }
+  return null;
+}
+
+function showNextPendingExecutor(managerChatId) {
+  const pending = getPendingExecutors();
+
+  if (!pending.length) {
+    userStates.delete(managerChatId);
+    sendMessage(
+      managerChatId,
+      "Заявок на модерации сейчас нет.",
+      getMainKeyboard(true)
+    );
+    return;
+  }
+
+  const profile = pending[0];
+
+  userStates.set(managerChatId, {
+    type: "manager_review_executor",
+    step: "decision",
+    targetExecutorTelegramId: profile.telegramId,
+    selectedSpecializations: [],
+    reviewAccuracy: null,
+    reviewSpeed: null,
+    reviewAesthetics: null
+  });
+
+  sendMessage(
+    managerChatId,
+    `Заявка на модерацию\n\n${formatExecutorProfile(profile)}`,
+    getModerationKeyboard()
+  );
+
+  if (profile.paymentFile?.type === "document") {
+    sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
+  }
+}
+
+function handleManagerReviewStep(chatId, text, from, state) {
+  const found = findExecutorByTelegramId(state.targetExecutorTelegramId);
+
+  if (!found) {
+    userStates.delete(chatId);
+    sendMessage(chatId, "Исполнитель для модерации не найден.", getMainKeyboard(true));
+    return;
+  }
+
+  const executorChatId = found.chatId;
+  const profile = found.profile;
+
+  if (state.step === "decision") {
+    if (text === "Следующая заявка") {
+      showNextPendingExecutor(chatId);
+      return;
+    }
+
+    if (text === "В меню менеджера") {
+      userStates.delete(chatId);
+      sendMessage(chatId, "Вернулись в меню менеджера.", getMainKeyboard(true));
+      return;
+    }
+
+    if (text === "Отклонить исполнителя") {
+      profile.status = "Отклонён";
+      profile.approvedBy = getManagerContact(from);
+      profile.approvedByManagerId = from?.id || null;
+      profile.verifiedSpecializations = [];
+      profile.reviewAccuracy = null;
+      profile.reviewSpeed = null;
+      profile.reviewAesthetics = null;
+      profile.baseRating = null;
+      profile.newcomerBoost = null;
+      profile.rating = null;
+      profile.updatedAt = new Date().toISOString();
+      executors.set(executorChatId, profile);
+
+      userStates.delete(chatId);
+
+      sendMessage(
+        executorChatId,
+        "Твоя анкета отклонена менеджером. Позже можно будет отредактировать анкету и отправить её снова.",
+        getMainKeyboard(false, true)
+      );
+
+      sendMessage(chatId, "Исполнитель отклонён.", getMainKeyboard(true));
+      return;
+    }
+
+    if (text === "Подтвердить исполнителя") {
+      state.step = "verified_specializations";
+      state.selectedSpecializations = [];
+      sendMessage(
+        chatId,
+        "Выбери подтверждённые специализации. Можно несколько. Потом нажми Готово.",
+        getDoneKeyboard(SPECIALIZATION_OPTIONS)
+      );
+      return;
+    }
+
+    sendMessage(chatId, "Выбери действие по заявке.", getModerationKeyboard());
+    return;
+  }
+
+  if (state.step === "verified_specializations") {
+    if (text === "Готово") {
+      if (!state.selectedSpecializations.length) {
+        sendMessage(chatId, "Нужно подтвердить хотя бы одну специализацию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
+        return;
+      }
+
+      state.step = "review_accuracy";
+      sendMessage(chatId, "Оцени соблюдение ТЗ по шкале от 1 до 5.");
+      return;
+    }
+
+    if (!SPECIALIZATION_OPTIONS.includes(text)) {
+      sendMessage(chatId, "Выбери специализацию кнопкой или нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
+      return;
+    }
+
+    if (!state.selectedSpecializations.includes(text)) {
+      state.selectedSpecializations.push(text);
+    }
+
+    sendMessage(
+      chatId,
+      `Подтверждено: ${state.selectedSpecializations.join(", ")}`,
+      getDoneKeyboard(SPECIALIZATION_OPTIONS)
+    );
+    return;
+  }
+
+  if (state.step === "review_accuracy") {
+    const value = Number(text);
+
+    if (!Number.isInteger(value) || value < 1 || value > 5) {
+      sendMessage(chatId, "Введи целое число от 1 до 5.");
+      return;
+    }
+
+    state.reviewAccuracy = value;
+    state.step = "review_speed";
+    sendMessage(chatId, "Оцени скорость по шкале от 1 до 5.");
+    return;
+  }
+
+  if (state.step === "review_speed") {
+    const value = Number(text);
+
+    if (!Number.isInteger(value) || value < 1 || value > 5) {
+      sendMessage(chatId, "Введи целое число от 1 до 5.");
+      return;
+    }
+
+    state.reviewSpeed = value;
+    state.step = "review_aesthetics";
+    sendMessage(chatId, "Оцени эстетику по шкале от 1 до 5.");
+    return;
+  }
+
+  if (state.step === "review_aesthetics") {
+    const value = Number(text);
+
+    if (!Number.isInteger(value) || value < 1 || value > 5) {
+      sendMessage(chatId, "Введи целое число от 1 до 5.");
+      return;
+    }
+
+    state.reviewAesthetics = value;
+
+    const baseRating = calculateBaseRating(
+      state.reviewAccuracy,
+      state.reviewSpeed,
+      state.reviewAesthetics
+    );
+    const newcomerBoost = calculateNewcomerBoost(baseRating);
+    const finalRating = baseRating + newcomerBoost;
+
+    profile.status = "Подтверждён";
+    profile.approvedBy = getManagerContact(from);
+    profile.approvedByManagerId = from?.id || null;
+    profile.verifiedSpecializations = [...state.selectedSpecializations];
+    profile.reviewAccuracy = state.reviewAccuracy;
+    profile.reviewSpeed = state.reviewSpeed;
+    profile.reviewAesthetics = state.reviewAesthetics;
+    profile.baseRating = baseRating;
+    profile.newcomerBoost = newcomerBoost;
+    profile.rating = finalRating;
+    profile.updatedAt = new Date().toISOString();
+    executors.set(executorChatId, profile);
+
+    userStates.delete(chatId);
+
+    sendMessage(
+      executorChatId,
+      `Твоя анкета подтверждена.\n\n${formatExecutorProfile(profile)}`,
+      getMainKeyboard(false, true)
+    );
+
+    if (profile.paymentFile?.type === "document") {
+      sendDocument(executorChatId, profile.paymentFile.file_id, "Твой файл с реквизитами");
+    }
+
+    sendMessage(
+      chatId,
+      `Исполнитель подтверждён.\n\nБазовый рейтинг: ${baseRating}\nБуст новичка: +${newcomerBoost}\nИтоговый рейтинг: ${finalRating}`,
+      getMainKeyboard(true)
+    );
+    return;
+  }
+}
+
 function handleTextMessage(chatId, text, from, message) {
   const state = userStates.get(chatId);
   const executorProfile = executors.get(chatId);
@@ -662,6 +924,11 @@ function handleTextMessage(chatId, text, from, message) {
 
   if (state?.type === "executor_registration") {
     handleExecutorRegistrationStep(chatId, message, state);
+    return;
+  }
+
+  if (state?.type === "manager_review_executor") {
+    handleManagerReviewStep(chatId, text, from, state);
     return;
   }
 
@@ -741,6 +1008,16 @@ function handleTextMessage(chatId, text, from, message) {
         .join("\n");
 
       sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
+      return;
+    }
+
+    if (text === "Заявки в исполнители") {
+      showNextPendingExecutor(chatId);
+      return;
+    }
+
+    if (text === "В меню менеджера") {
+      sendMessage(chatId, "Меню менеджера.", getMainKeyboard(true));
       return;
     }
 
