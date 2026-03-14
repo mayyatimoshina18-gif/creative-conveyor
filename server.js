@@ -1,11 +1,12 @@
 const http = require("http");
 const https = require("https");
+const { Pool } = require("pg");
 
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD;
+const DATABASE_URL = process.env.DATABASE_URL;
 
-// Для теста: 1 минута. Потом поменяем.
 const REMINDER_DELAY_MS = 60 * 1000;
 const MAX_REMINDER_ATTEMPTS = 3;
 
@@ -40,6 +41,131 @@ const DATE_OPTION_VALUES = {
 };
 
 const TIME_OPTIONS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00"];
+
+let pool = null;
+
+function createDbPool() {
+  if (!DATABASE_URL) {
+    console.log("DATABASE_URL is missing");
+    return null;
+  }
+
+  return new Pool({
+    connectionString: DATABASE_URL,
+    ssl: false
+  });
+}
+
+async function runQuery(text, params = []) {
+  if (!pool) {
+    throw new Error("Database pool is not initialized");
+  }
+  return pool.query(text, params);
+}
+
+async function initDb() {
+  pool = createDbPool();
+
+  if (!pool) {
+    console.log("Postgres is disabled because DATABASE_URL is missing");
+    return;
+  }
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS manager_contacts (
+      telegram_id BIGINT PRIMARY KEY,
+      contact TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS executors (
+      telegram_id BIGINT PRIMARY KEY,
+      username TEXT,
+      telegram_contact TEXT NOT NULL,
+      full_name TEXT,
+      specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
+      verified_specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
+      portfolio TEXT,
+      payment_method TEXT,
+      payment_details JSONB,
+      payment_file JSONB,
+      unavailable_days JSONB NOT NULL DEFAULT '[]'::jsonb,
+      unavailable_time TEXT,
+      status TEXT,
+      approved_by TEXT,
+      approved_by_manager_id BIGINT,
+      review_accuracy INTEGER,
+      review_speed INTEGER,
+      review_aesthetics INTEGER,
+      base_rating INTEGER,
+      newcomer_boost INTEGER,
+      rating INTEGER,
+      response_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id BIGSERIAL PRIMARY KEY,
+      manager_id BIGINT NOT NULL,
+      manager_username TEXT,
+      manager_contact TEXT NOT NULL,
+      title TEXT,
+      categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+      deadline_date TEXT,
+      deadline_time TEXT,
+      deadline TEXT,
+      price TEXT,
+      brief JSONB,
+      sources JSONB,
+      references JSONB,
+      comment TEXT,
+      status TEXT,
+      published_at TIMESTAMPTZ,
+      assigned_executor_id BIGINT,
+      assigned_executor_name TEXT,
+      assigned_executor_contact TEXT,
+      stage_materials JSONB NOT NULL DEFAULT '{}'::jsonb,
+      timeline JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS task_responses (
+      id BIGSERIAL PRIMARY KEY,
+      task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      executor_id BIGINT NOT NULL,
+      executor_name TEXT NOT NULL,
+      executor_contact TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await runQuery(`
+    CREATE INDEX IF NOT EXISTS idx_task_responses_task_id
+    ON task_responses(task_id);
+  `);
+
+  await runQuery(`
+    CREATE INDEX IF NOT EXISTS idx_tasks_manager_id
+    ON tasks(manager_id);
+  `);
+
+  await runQuery(`
+    CREATE INDEX IF NOT EXISTS idx_tasks_assigned_executor_id
+    ON tasks(assigned_executor_id);
+  `);
+
+  console.log("Postgres connected and tables initialized");
+}
 
 function sendTelegramRequest(method, payload, callback) {
   if (!BOT_TOKEN) {
@@ -678,11 +804,7 @@ function handleTaskCreationStep(chatId, message, state) {
       }
 
       state.step = "deadline_date";
-      sendMessage(
-        chatId,
-        "Выбери дату дедлайна.",
-        getDateKeyboard()
-      );
+      sendMessage(chatId, "Выбери дату дедлайна.", getDateKeyboard());
       return;
     }
 
@@ -710,7 +832,7 @@ function handleTaskCreationStep(chatId, message, state) {
       return;
     }
 
-    if (DATE_OPTION_VALUES.hasOwnProperty(text)) {
+    if (Object.prototype.hasOwnProperty.call(DATE_OPTION_VALUES, text)) {
       const date = new Date();
       date.setDate(date.getDate() + DATE_OPTION_VALUES[text]);
       state.task.deadlineDate = date.toISOString().slice(0, 10);
@@ -1925,7 +2047,6 @@ function handleCallbackQuery(callbackQuery) {
 
   if (data.startsWith("stage_")) {
     const parts = data.split("_");
-    // stage read yes 12
     const stageKey = parts[1];
     const answer = parts[2];
     const taskId = Number(parts[3]);
@@ -2031,61 +2152,72 @@ function handleCallbackQuery(callbackQuery) {
   answerCallback(callbackQuery.id, `Сохранено: ${decision}`);
 }
 
-const server = http.createServer((req, res) => {
-  console.log(`Incoming request: ${req.method} ${req.url}`);
+async function bootstrap() {
+  try {
+    await initDb();
 
-  if (req.method === "GET" && req.url === "/") {
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Creative Conveyor is running");
-    return;
-  }
+    const server = http.createServer((req, res) => {
+      console.log(`Incoming request: ${req.method} ${req.url}`);
 
-  if (req.method === "GET" && req.url === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ status: "ok" }));
-    return;
-  }
-
-  if (req.method === "POST" && req.url === "/webhook") {
-    let body = "";
-
-    req.on("data", chunk => {
-      body += chunk.toString();
-    });
-
-    req.on("end", () => {
-      console.log("Webhook update:", body);
-
-      try {
-        const update = JSON.parse(body);
-
-        if (update.callback_query) {
-          handleCallbackQuery(update.callback_query);
-        } else if (update.message) {
-          const message = update.message;
-          const chatId = message?.chat?.id;
-          const text = message?.text || null;
-          const from = message?.from || null;
-
-          if (chatId && message) {
-            handleTextMessage(chatId, text, from, message);
-          }
-        }
-      } catch (error) {
-        console.error("Parse error:", error);
+      if (req.method === "GET" && req.url === "/") {
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Creative Conveyor is running");
+        return;
       }
 
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true }));
+      if (req.method === "GET" && req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/webhook") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", () => {
+          console.log("Webhook update:", body);
+
+          try {
+            const update = JSON.parse(body);
+
+            if (update.callback_query) {
+              handleCallbackQuery(update.callback_query);
+            } else if (update.message) {
+              const message = update.message;
+              const chatId = message?.chat?.id;
+              const text = message?.text || null;
+              const from = message?.from || null;
+
+              if (chatId && message) {
+                handleTextMessage(chatId, text, from, message);
+              }
+            }
+          } catch (error) {
+            console.error("Parse error:", error);
+          }
+
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+        });
+
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found");
     });
 
-    return;
+    server.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Bootstrap error:", error);
+    process.exit(1);
   }
+}
 
-  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("Not found");
-});
-
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+bootstrap();
