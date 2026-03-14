@@ -7,6 +7,8 @@ const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD;
 
 const waitingForManagerPassword = new Set();
 const managers = new Set();
+const userStates = new Map();
+const tasks = [];
 
 function sendTelegramRequest(method, payload, callback) {
   if (!BOT_TOKEN) {
@@ -60,27 +62,270 @@ function sendMessage(chatId, text, replyMarkup = null) {
   sendTelegramRequest("sendMessage", payload);
 }
 
-function handleTextMessage(chatId, text) {
-  if (text === "/start") {
+function getMainKeyboard(isManager = false) {
+  if (isManager) {
+    return {
+      keyboard: [
+        [{ text: "Создать задачу" }],
+        [{ text: "Мои задачи" }],
+        [{ text: "Я исполнитель" }]
+      ],
+      resize_keyboard: true
+    };
+  }
+
+  return {
+    keyboard: [
+      [{ text: "Я исполнитель" }],
+      [{ text: "Я менеджер" }]
+    ],
+    resize_keyboard: true
+  };
+}
+
+function getSkipKeyboard() {
+  return {
+    keyboard: [[{ text: "Пропустить" }]],
+    resize_keyboard: true
+  };
+}
+
+function getManagerContact(from) {
+  if (from?.username) {
+    return `@${from.username}`;
+  }
+
+  if (from?.first_name) {
+    return `${from.first_name} (id: ${from.id})`;
+  }
+
+  return `id: ${from?.id || "unknown"}`;
+}
+
+function startTaskCreation(chatId, from) {
+  userStates.set(chatId, {
+    type: "create_task",
+    step: "title",
+    task: {
+      id: tasks.length + 1,
+      createdAt: new Date().toISOString(),
+      managerId: from?.id || null,
+      managerUsername: from?.username || null,
+      managerContact: getManagerContact(from),
+      title: "",
+      deadline: "",
+      price: "",
+      brief: null,
+      sources: null,
+      references: null,
+      comment: null
+    }
+  });
+
+  sendMessage(chatId, "Введи название задачи.");
+}
+
+function formatField(field) {
+  if (!field) return "—";
+
+  if (field.type === "text") {
+    return field.value || "—";
+  }
+
+  if (field.type === "document") {
+    return `Файл: ${field.file_name || "без имени"}\nfile_id: ${field.file_id}${field.caption ? `\nКомментарий: ${field.caption}` : ""}`;
+  }
+
+  return "—";
+}
+
+function formatTaskCard(task) {
+  return [
+    `Задача #${task.id}`,
+    ``,
+    `Название: ${task.title || "—"}`,
+    `Дедлайн: ${task.deadline || "—"}`,
+    `Стоимость: ${task.price || "—"}`,
+    ``,
+    `ТЗ:`,
+    `${formatField(task.brief)}`,
+    ``,
+    `Источники:`,
+    `${formatField(task.sources)}`,
+    ``,
+    `Референсы:`,
+    `${formatField(task.references)}`,
+    ``,
+    `Комментарий:`,
+    `${task.comment || "—"}`,
+    ``,
+    `Менеджер: ${task.managerContact}`
+  ].join("\n");
+}
+
+function finishTaskCreation(chatId, state) {
+  tasks.push(state.task);
+  userStates.delete(chatId);
+
+  sendMessage(
+    chatId,
+    `Задача создана.\n\n${formatTaskCard(state.task)}`,
+    getMainKeyboard(true)
+  );
+}
+
+function extractInput(message) {
+  if (message.document) {
+    return {
+      type: "document",
+      file_id: message.document.file_id,
+      file_name: message.document.file_name || null,
+      mime_type: message.document.mime_type || null,
+      caption: message.caption || ""
+    };
+  }
+
+  if (message.text) {
+    return {
+      type: "text",
+      value: message.text
+    };
+  }
+
+  return null;
+}
+
+function handleTaskCreationStep(chatId, message, state) {
+  const text = message.text;
+  const input = extractInput(message);
+
+  if (!input) {
+    sendMessage(chatId, "Не удалось прочитать сообщение. Отправь текст, ссылку или файл.");
+    return;
+  }
+
+  if (state.step === "title") {
+    if (input.type !== "text") {
+      sendMessage(chatId, "Название задачи лучше отправить текстом.");
+      return;
+    }
+
+    state.task.title = input.value;
+    state.step = "deadline";
+    sendMessage(chatId, "Введи дедлайн. Например: сегодня до 18:00 или 16 марта 14:00.");
+    return;
+  }
+
+  if (state.step === "deadline") {
+    if (input.type !== "text") {
+      sendMessage(chatId, "Дедлайн лучше отправить текстом.");
+      return;
+    }
+
+    state.task.deadline = input.value;
+    state.step = "price";
+    sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
+    return;
+  }
+
+  if (state.step === "price") {
+    if (input.type !== "text") {
+      sendMessage(chatId, "Стоимость лучше отправить текстом.");
+      return;
+    }
+
+    state.task.price = input.value;
+    state.step = "brief";
     sendMessage(
       chatId,
-      "Привет. Выбери роль:",
-      {
-        keyboard: [
-          [{ text: "Я исполнитель" }],
-          [{ text: "Я менеджер" }]
-        ],
-        resize_keyboard: true
-      }
+      "Отправь ТЗ. Можно текст, ссылку или файл.",
+      getSkipKeyboard()
     );
+    return;
+  }
+
+  if (state.step === "brief") {
+    if (text === "Пропустить") {
+      state.task.brief = null;
+    } else {
+      state.task.brief = input;
+    }
+
+    state.step = "sources";
+    sendMessage(
+      chatId,
+      "Отправь источники. Можно текст, ссылку или файл. Это поле необязательное.",
+      getSkipKeyboard()
+    );
+    return;
+  }
+
+  if (state.step === "sources") {
+    if (text === "Пропустить") {
+      state.task.sources = null;
+    } else {
+      state.task.sources = input;
+    }
+
+    state.step = "references";
+    sendMessage(
+      chatId,
+      "Отправь референсы. Можно текст, ссылку или файл. Это поле необязательное.",
+      getSkipKeyboard()
+    );
+    return;
+  }
+
+  if (state.step === "references") {
+    if (text === "Пропустить") {
+      state.task.references = null;
+    } else {
+      state.task.references = input;
+    }
+
+    state.step = "comment";
+    sendMessage(
+      chatId,
+      "Отправь комментарий. Это поле необязательное.",
+      getSkipKeyboard()
+    );
+    return;
+  }
+
+  if (state.step === "comment") {
+    if (text === "Пропустить") {
+      state.task.comment = null;
+    } else if (input.type === "text") {
+      state.task.comment = input.value;
+    } else {
+      state.task.comment = `Файл: ${input.file_name || "без имени"}${input.caption ? ` | ${input.caption}` : ""}`;
+    }
+
+    finishTaskCreation(chatId, state);
+  }
+}
+
+function handleTextMessage(chatId, text, from, message) {
+  const state = userStates.get(chatId);
+
+  if (text === "/start") {
+    userStates.delete(chatId);
+    sendMessage(chatId, "Привет. Выбери роль:", getMainKeyboard(managers.has(chatId)));
+    return;
+  }
+
+  if (state?.type === "create_task") {
+    handleTaskCreationStep(chatId, message, state);
     return;
   }
 
   if (text === "Я исполнитель") {
     waitingForManagerPassword.delete(chatId);
+    userStates.delete(chatId);
     sendMessage(
       chatId,
-      "Режим исполнителя включён. Позже здесь будут профиль, задачи, статус и рейтинг."
+      "Режим исполнителя включён. Позже здесь будут профиль, задачи, статус и рейтинг.",
+      getMainKeyboard(false)
     );
     return;
   }
@@ -97,7 +342,8 @@ function handleTextMessage(chatId, text) {
       managers.add(chatId);
       sendMessage(
         chatId,
-        "Доступ менеджера открыт. Позже здесь будут создание задач, контроль статусов и архив."
+        "Доступ менеджера открыт.",
+        getMainKeyboard(true)
       );
     } else {
       sendMessage(chatId, "Неверный пароль. Попробуй ещё раз.");
@@ -106,17 +352,32 @@ function handleTextMessage(chatId, text) {
   }
 
   if (managers.has(chatId)) {
-    sendMessage(
-      chatId,
-      `Ты в режиме менеджера. Сообщение получено: ${text}`
-    );
+    if (text === "Создать задачу") {
+      startTaskCreation(chatId, from);
+      return;
+    }
+
+    if (text === "Мои задачи") {
+      const managerTasks = tasks.filter(task => task.managerId === from?.id);
+
+      if (!managerTasks.length) {
+        sendMessage(chatId, "У тебя пока нет созданных задач.", getMainKeyboard(true));
+        return;
+      }
+
+      const summary = managerTasks
+        .map(task => `#${task.id} — ${task.title} | ${task.deadline} | ${task.price}`)
+        .join("\n");
+
+      sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
+      return;
+    }
+
+    sendMessage(chatId, "Ты в режиме менеджера. Выбери действие из меню.", getMainKeyboard(true));
     return;
   }
 
-  sendMessage(
-    chatId,
-    "Напиши /start, чтобы выбрать роль."
-  );
+  sendMessage(chatId, "Напиши /start, чтобы выбрать роль.");
 }
 
 const server = http.createServer((req, res) => {
@@ -146,11 +407,13 @@ const server = http.createServer((req, res) => {
 
       try {
         const update = JSON.parse(body);
-        const chatId = update.message?.chat?.id;
-        const text = update.message?.text;
+        const message = update.message;
+        const chatId = message?.chat?.id;
+        const text = message?.text || null;
+        const from = message?.from || null;
 
-        if (chatId && text) {
-          handleTextMessage(chatId, text);
+        if (chatId && message) {
+          handleTextMessage(chatId, text, from, message);
         }
       } catch (error) {
         console.error("Parse error:", error);
