@@ -3,21 +3,22 @@ const https = require("https");
 
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD;
 
-function sendMessage(chatId, text) {
+const waitingForManagerPassword = new Set();
+const managers = new Set();
+
+function sendTelegramRequest(method, payload, callback) {
   if (!BOT_TOKEN) {
     console.log("BOT_TOKEN is missing");
     return;
   }
 
-  const data = JSON.stringify({
-    chat_id: chatId,
-    text
-  });
+  const data = JSON.stringify(payload);
 
   const options = {
     hostname: "api.telegram.org",
-    path: `/bot${BOT_TOKEN}/sendMessage`,
+    path: `/bot${BOT_TOKEN}/${method}`,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -33,16 +34,89 @@ function sendMessage(chatId, text) {
     });
 
     res.on("end", () => {
-      console.log("sendMessage response:", body);
+      console.log(`${method} response:`, body);
+      if (callback) callback(body);
     });
   });
 
   req.on("error", error => {
-    console.error("sendMessage error:", error);
+    console.error(`${method} error:`, error);
   });
 
   req.write(data);
   req.end();
+}
+
+function sendMessage(chatId, text, replyMarkup = null) {
+  const payload = {
+    chat_id: chatId,
+    text
+  };
+
+  if (replyMarkup) {
+    payload.reply_markup = replyMarkup;
+  }
+
+  sendTelegramRequest("sendMessage", payload);
+}
+
+function handleTextMessage(chatId, text) {
+  if (text === "/start") {
+    sendMessage(
+      chatId,
+      "Привет. Выбери роль:",
+      {
+        keyboard: [
+          [{ text: "Я исполнитель" }],
+          [{ text: "Я менеджер" }]
+        ],
+        resize_keyboard: true
+      }
+    );
+    return;
+  }
+
+  if (text === "Я исполнитель") {
+    waitingForManagerPassword.delete(chatId);
+    sendMessage(
+      chatId,
+      "Режим исполнителя включён. Позже здесь будут профиль, задачи, статус и рейтинг."
+    );
+    return;
+  }
+
+  if (text === "Я менеджер") {
+    waitingForManagerPassword.add(chatId);
+    sendMessage(chatId, "Введи пароль менеджера.");
+    return;
+  }
+
+  if (waitingForManagerPassword.has(chatId)) {
+    if (text === MANAGER_PASSWORD) {
+      waitingForManagerPassword.delete(chatId);
+      managers.add(chatId);
+      sendMessage(
+        chatId,
+        "Доступ менеджера открыт. Позже здесь будут создание задач, контроль статусов и архив."
+      );
+    } else {
+      sendMessage(chatId, "Неверный пароль. Попробуй ещё раз.");
+    }
+    return;
+  }
+
+  if (managers.has(chatId)) {
+    sendMessage(
+      chatId,
+      `Ты в режиме менеджера. Сообщение получено: ${text}`
+    );
+    return;
+  }
+
+  sendMessage(
+    chatId,
+    "Напиши /start, чтобы выбрать роль."
+  );
 }
 
 const server = http.createServer((req, res) => {
@@ -76,7 +150,7 @@ const server = http.createServer((req, res) => {
         const text = update.message?.text;
 
         if (chatId && text) {
-          sendMessage(chatId, `Получила сообщение: ${text}`);
+          handleTextMessage(chatId, text);
         }
       } catch (error) {
         console.error("Parse error:", error);
