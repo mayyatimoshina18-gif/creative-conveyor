@@ -2718,7 +2718,7 @@ async function bootstrap() {
         return;
       }
 
-      if (req.method === "GET" && req.url === "/api/tasks") {
+            if (req.method === "GET" && req.url === "/api/tasks") {
         try {
           const groupedTasks = getMiniappTasksGrouped();
           sendJson(res, 200, groupedTasks);
@@ -2726,6 +2726,116 @@ async function bootstrap() {
           console.error("GET /api/tasks error:", error);
           sendJson(res, 500, { error: "Failed to load tasks" });
         }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/tasks") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+
+            const title = String(payload.title || "").trim();
+            const categories = Array.isArray(payload.categories)
+              ? payload.categories.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const deadlineDate = String(payload.deadlineDate || "").trim();
+            const deadlineTime = String(payload.deadlineTime || "").trim();
+            const price = String(payload.price || "").trim();
+            const managerContact = String(payload.managerContact || "").trim();
+            const managerId = Number(payload.managerId || 0) || 0;
+            const managerUsername = payload.managerUsername ? String(payload.managerUsername) : null;
+            const comment = payload.comment ? String(payload.comment) : null;
+
+            if (!title) {
+              sendJson(res, 400, { error: "Title is required" });
+              return;
+            }
+
+            if (!categories.length) {
+              sendJson(res, 400, { error: "At least one category is required" });
+              return;
+            }
+
+            if (!deadlineDate) {
+              sendJson(res, 400, { error: "Deadline date is required" });
+              return;
+            }
+
+            if (!deadlineTime) {
+              sendJson(res, 400, { error: "Deadline time is required" });
+              return;
+            }
+
+            if (!price) {
+              sendJson(res, 400, { error: "Price is required" });
+              return;
+            }
+
+            if (!managerContact) {
+              sendJson(res, 400, { error: "Manager contact is required" });
+              return;
+            }
+
+            const newTask = {
+              id: null,
+              createdAt: new Date().toISOString(),
+              managerId,
+              managerUsername,
+              managerContact,
+              title,
+              categories,
+              deadlineDate,
+              deadlineTime,
+              deadline: `${deadlineDate} ${deadlineTime}`,
+              price,
+              brief: null,
+              sources: null,
+              refs_data: null,
+              comment,
+              status: "Создана",
+              responses: [],
+              publishedAt: null,
+              assignedExecutorId: null,
+              assignedExecutorName: null,
+              assignedExecutorContact: null,
+              stageMaterials: {
+                thirty: null,
+                sixty: null,
+                final: null
+              },
+              timeline: {
+                assignedAt: null,
+                briefReadAt: null,
+                inWorkAt: null,
+                shown30At: null,
+                shown60At: null,
+                submittedAt: null,
+                approvedAt: null,
+                returnedForFixesAt: null,
+                unpaidAt: null,
+                paidAt: null
+              }
+            };
+
+            await saveTaskToDb(newTask);
+            tasks.push(newTask);
+
+            sendJson(res, 201, {
+              ok: true,
+              task: mapTaskForMiniapp(newTask)
+            });
+          } catch (error) {
+            console.error("POST /api/tasks error:", error);
+            sendJson(res, 500, { error: "Failed to create task" });
+          }
+        });
+
         return;
       }
 
