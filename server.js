@@ -1015,28 +1015,32 @@ function formatExecutorProfile(profile) {
     `Оценка скорости: ${typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : "—"}`,
     `Оценка эстетики: ${typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : "—"}`,
     `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
-    `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
+    `Приоритет новичка: ${typeof profile.newcomerBoost === "number" ? `ещё ${profile.newcomerBoost} заказ(а)` : "—"}`,
     `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
   ].join("\n");
 }
 
 function calculateBaseRating(accuracy, speed, aesthetics) {
-  const startScore = accuracy * 0.4 + speed * 0.4 + aesthetics * 0.2;
+  const startScore = accuracy * 0.5 + speed * 0.35 + aesthetics * 0.15;
   return Math.round(startScore * 20);
 }
 
 function calculateNewcomerBoost(baseRating) {
-  if (baseRating >= 85) return 8;
-  if (baseRating >= 75) return 7;
-  if (baseRating >= 65) return 6;
-  return 5;
+  return 2;
 }
 
 function getResponseRecommendation(executor) {
   const rating = typeof executor.rating === "number" ? executor.rating : 0;
-  if (rating >= 95) return { label: "Очень рекомендуется", score: rating + 5 };
-  if (rating >= 85) return { label: "Рекомендуется", score: rating + 3 };
-  if (rating >= 75) return { label: "Подходит", score: rating + 1 };
+  const completedOrders = typeof executor.completedOrders === "number" ? executor.completedOrders : 0;
+  const newcomerPriorityLeft = completedOrders < 2 ? Math.max(0, 2 - completedOrders) : 0;
+
+  if (newcomerPriorityLeft > 0) {
+    return { label: `Новичок: приоритет ещё ${newcomerPriorityLeft} заказ(а)`, score: rating + 1000 };
+  }
+
+  if (rating >= 90) return { label: "Очень рекомендуется", score: rating + 5 };
+  if (rating >= 80) return { label: "Рекомендуется", score: rating + 3 };
+  if (rating >= 70) return { label: "Подходит", score: rating + 1 };
   return { label: "Ниже приоритета", score: rating };
 }
 
@@ -1109,6 +1113,33 @@ function mapTaskForMiniapp(task) {
     assignedExecutorContact: task.assignedExecutorContact || null,
     publishedAt: task.publishedAt || null,
     createdAt: task.createdAt || null
+  };
+}
+
+
+function mapExecutorForMiniapp(profile) {
+  return {
+    telegramId: profile.telegramId,
+    executorCode: profile.executorCode || null,
+    username: profile.username || null,
+    telegramContact: profile.telegramContact || null,
+    fullName: profile.fullName || null,
+    specializations: profile.specializations || [],
+    verifiedSpecializations: profile.verifiedSpecializations || [],
+    portfolio: profile.portfolio || null,
+    paymentMethod: profile.paymentMethod || null,
+    paymentDetails: profile.paymentDetails || null,
+    unavailableDays: profile.unavailableDays || [],
+    unavailableTime: profile.unavailableTime || "",
+    status: profile.status || null,
+    approvedBy: profile.approvedBy || null,
+    approvedByManagerId: profile.approvedByManagerId || null,
+    rating: typeof profile.rating === "number" ? profile.rating : null,
+    completedOrders: typeof profile.completedOrders === "number" ? profile.completedOrders : 0,
+    newcomerBoost: typeof profile.newcomerBoost === "number" ? profile.newcomerBoost : null,
+    reviewAccuracy: typeof profile.reviewAccuracy === "number" ? profile.reviewAccuracy : null,
+    reviewSpeed: typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : null,
+    reviewAesthetics: typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : null
   };
 }
 
@@ -2036,7 +2067,7 @@ async function handleManagerReviewStep(chatId, text, from, state) {
 
     sendMessage(
       chatId,
-      `Исполнитель подтверждён.\n\nБазовый рейтинг: ${baseRating}\nБуст новичка: +${newcomerBoost}\nИтоговый рейтинг: ${finalRating}`,
+      `Исполнитель подтверждён.\n\nБазовая метрика: ${baseRating}\nПриоритет новичка: ещё ${newcomerBoost} заказ(а)\nТекущая внутренняя метрика: ${finalRating}`,
       getMainKeyboard(true)
     );
   }
@@ -3071,6 +3102,139 @@ async function bootstrap() {
           } catch (error) {
             console.error("POST /api/executors/update error:", error);
             sendJson(res, 500, { error: "Failed to update executor" });
+          }
+        });
+
+        return;
+      }
+
+
+      if (req.method === "GET" && req.url === "/api/executors/pending") {
+        try {
+          const pending = Array.from(executors.values())
+            .filter(profile => profile.status === "На модерации")
+            .map(mapExecutorForMiniapp);
+
+          sendJson(res, 200, { ok: true, executors: pending });
+        } catch (error) {
+          console.error("GET /api/executors/pending error:", error);
+          sendJson(res, 500, { error: "Failed to load pending executors" });
+        }
+
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/executors/moderate") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+            const decision = String(payload.decision || "").trim();
+            const managerContact = String(payload.managerContact || "").trim() || "Менеджер";
+            const managerTelegramId = Number(payload.managerTelegramId || 0) || null;
+
+            if (!telegramId) {
+              sendJson(res, 400, { error: "telegramId is required" });
+              return;
+            }
+
+            if (!["approve", "reject"].includes(decision)) {
+              sendJson(res, 400, { error: "decision must be approve or reject" });
+              return;
+            }
+
+            const profile = executors.get(telegramId);
+
+            if (!profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            if (decision === "reject") {
+              profile.status = "Отклонён";
+              profile.approvedBy = managerContact;
+              profile.approvedByManagerId = managerTelegramId;
+              profile.verifiedSpecializations = [];
+              profile.reviewAccuracy = null;
+              profile.reviewSpeed = null;
+              profile.reviewAesthetics = null;
+              profile.baseRating = null;
+              profile.newcomerBoost = null;
+              profile.rating = null;
+              profile.updatedAt = new Date().toISOString();
+
+              await ensureExecutorCodeForProfile(profile);
+              await saveExecutorToDb(profile);
+              executors.set(profile.telegramId, profile);
+
+              if (profile.telegramId) {
+                sendMessage(
+                  profile.telegramId,
+                  "Анкета отклонена менеджером. Отредактируй данные и отправь заявку снова.",
+                  getMainKeyboard(false, true)
+                );
+              }
+
+              sendJson(res, 200, { ok: true, executor: mapExecutorForMiniapp(profile) });
+              return;
+            }
+
+            const verifiedSpecializations = Array.isArray(payload.verifiedSpecializations)
+              ? payload.verifiedSpecializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const reviewAccuracy = Number(payload.reviewAccuracy || 0);
+            const reviewSpeed = Number(payload.reviewSpeed || 0);
+            const reviewAesthetics = Number(payload.reviewAesthetics || 0);
+
+            if (!verifiedSpecializations.length) {
+              sendJson(res, 400, { error: "verifiedSpecializations is required" });
+              return;
+            }
+
+            const scores = [reviewAccuracy, reviewSpeed, reviewAesthetics];
+            if (scores.some(value => !Number.isInteger(value) || value < 1 || value > 5)) {
+              sendJson(res, 400, { error: "Scores must be integers from 1 to 5" });
+              return;
+            }
+
+            const baseRating = calculateBaseRating(reviewAccuracy, reviewSpeed, reviewAesthetics);
+            const newcomerBoost = calculateNewcomerBoost(baseRating);
+            const finalRating = baseRating;
+
+            profile.status = "Подтверждён";
+            profile.approvedBy = managerContact;
+            profile.approvedByManagerId = managerTelegramId;
+            profile.verifiedSpecializations = verifiedSpecializations;
+            profile.reviewAccuracy = reviewAccuracy;
+            profile.reviewSpeed = reviewSpeed;
+            profile.reviewAesthetics = reviewAesthetics;
+            profile.baseRating = baseRating;
+            profile.newcomerBoost = newcomerBoost;
+            profile.rating = finalRating;
+            profile.updatedAt = new Date().toISOString();
+
+            await ensureExecutorCodeForProfile(profile);
+            await saveExecutorToDb(profile);
+            executors.set(profile.telegramId, profile);
+
+            if (profile.telegramId) {
+              sendMessage(
+                profile.telegramId,
+                `Анкета подтверждена.\n\nТЗ: ${reviewAccuracy}/5\nСроки: ${reviewSpeed}/5\nЭстетика: ${reviewAesthetics}/5\n\nТы попадаешь в приоритет выдачи на первые ${newcomerBoost} заказа.`,
+                getMainKeyboard(false, true)
+              );
+            }
+
+            sendJson(res, 200, { ok: true, executor: mapExecutorForMiniapp(profile) });
+          } catch (error) {
+            console.error("POST /api/executors/moderate error:", error);
+            sendJson(res, 500, { error: "Failed to moderate executor" });
           }
         });
 
