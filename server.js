@@ -2741,16 +2741,19 @@ async function bootstrap() {
             const payload = JSON.parse(body || "{}");
 
             const title = String(payload.title || "").trim();
-            const categories = Array.isArray(payload.categories)
-              ? payload.categories.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const deadlineDate = String(payload.deadlineDate || "").trim();
-            const deadlineTime = String(payload.deadlineTime || "").trim();
-            const price = String(payload.price || "").trim();
-            const managerContact = String(payload.managerContact || "").trim();
-            const managerId = Number(payload.managerId || 0) || 0;
-            const managerUsername = payload.managerUsername ? String(payload.managerUsername) : null;
-            const comment = payload.comment ? String(payload.comment) : null;
+const categories = Array.isArray(payload.categories)
+  ? payload.categories.map(item => String(item).trim()).filter(Boolean)
+  : [];
+const deadlineDate = String(payload.deadlineDate || "").trim();
+const deadlineTime = String(payload.deadlineTime || "").trim();
+const price = String(payload.price || "").trim();
+const managerContact = String(payload.managerContact || "").trim();
+const managerId = Number(payload.managerId || 0) || 0;
+const managerUsername = payload.managerUsername ? String(payload.managerUsername) : null;
+const sources = payload.sources ? String(payload.sources) : null;
+const refsData = payload.refs_data ? String(payload.refs_data) : null;
+const deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget) : null;
+const comment = payload.comment ? String(payload.comment) : null;
 
             if (!title) {
               sendJson(res, 400, { error: "Title is required" });
@@ -2794,10 +2797,16 @@ async function bootstrap() {
               deadlineTime,
               deadline: `${deadlineDate} ${deadlineTime}`,
               price,
-              brief: null,
-              sources: null,
-              refs_data: null,
-              comment,
+              brief: deliveryTarget
+  ? { type: "text", value: deliveryTarget }
+  : null,
+sources: sources
+  ? { type: "text", value: sources }
+  : null,
+refs_data: refsData
+  ? { type: "text", value: refsData }
+  : null,
+comment,
               status: "Создана",
               responses: [],
               publishedAt: null,
