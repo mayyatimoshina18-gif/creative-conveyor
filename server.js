@@ -1024,6 +1024,83 @@ function notifyTaskMaterials(chatId, task) {
   }
 }
 
+/* -------------------- API -------------------- */
+
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function mapTaskForMiniapp(task) {
+  return {
+    id: task.id,
+    title: task.title || "",
+    type: task.categories || [],
+    deadline: task.deadline || "",
+    price: task.price || "",
+    manager: task.managerContact || "—",
+    status: task.status || "",
+    assignedExecutorId: task.assignedExecutorId || null,
+    assignedExecutorName: task.assignedExecutorName || null,
+    assignedExecutorContact: task.assignedExecutorContact || null,
+    publishedAt: task.publishedAt || null,
+    createdAt: task.createdAt || null
+  };
+}
+
+function getMiniappTasksGrouped() {
+  const grouped = {
+    waiting: [],
+    active: [],
+    archived: []
+  };
+
+  for (const task of tasks) {
+    const mappedTask = mapTaskForMiniapp(task);
+    const status = String(task.status || "");
+
+    if (
+      status === "Ждёт исполнителя" ||
+      status === "Есть отклики" ||
+      status === "Создана"
+    ) {
+      grouped.waiting.push(mappedTask);
+      continue;
+    }
+
+    if (
+      status === "Назначена" ||
+      status === "ТЗ изучено" ||
+      status === "В работе" ||
+      status === "30%" ||
+      status === "60%" ||
+      status === "На проверке" ||
+      status === "Правки" ||
+      status === "Не оплачена"
+    ) {
+      grouped.active.push(mappedTask);
+      continue;
+    }
+
+    if (
+      status === "Выполнена" ||
+      status === "Оплачена"
+    ) {
+      grouped.archived.push(mappedTask);
+      continue;
+    }
+
+    grouped.waiting.push(mappedTask);
+  }
+
+  return grouped;
+}
+
 /* -------------------- Reminders -------------------- */
 
 function clearTaskReminder(taskId) {
@@ -2625,6 +2702,32 @@ async function bootstrap() {
 
     const server = http.createServer((req, res) => {
       console.log(`Incoming request: ${req.method} ${req.url}`);
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        });
+        res.end();
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/api/health") {
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/api/tasks") {
+        try {
+          const groupedTasks = getMiniappTasksGrouped();
+          sendJson(res, 200, groupedTasks);
+        } catch (error) {
+          console.error("GET /api/tasks error:", error);
+          sendJson(res, 500, { error: "Failed to load tasks" });
+        }
+        return;
+      }
 
       if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
