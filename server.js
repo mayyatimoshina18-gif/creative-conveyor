@@ -2991,6 +2991,92 @@ async function bootstrap() {
         return;
       }
 
+      if (req.method === "POST" && req.url === "/api/executors/update") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+
+            if (!telegramId) {
+              sendJson(res, 400, { error: "telegramId is required" });
+              return;
+            }
+
+            const profile = executors.get(telegramId);
+
+            if (!profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            const fullName = String(payload.fullName || "").trim();
+            const telegramContact = String(payload.telegramContact || "").trim();
+            const specializations = Array.isArray(payload.specializations)
+              ? payload.specializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const portfolio = payload.portfolio ? String(payload.portfolio) : null;
+            const paymentMethod = String(payload.paymentMethod || "").trim();
+            const paymentDetailsValue = String(payload.paymentDetails || "").trim();
+            const unavailableDays = Array.isArray(payload.unavailableDays)
+              ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const unavailableTime = payload.unavailableTime ? String(payload.unavailableTime) : "";
+
+            if (!fullName) {
+              sendJson(res, 400, { error: "fullName is required" });
+              return;
+            }
+
+            if (!telegramContact) {
+              sendJson(res, 400, { error: "telegramContact is required" });
+              return;
+            }
+
+            if (!specializations.length) {
+              sendJson(res, 400, { error: "At least one specialization is required" });
+              return;
+            }
+
+            if (!paymentMethod) {
+              sendJson(res, 400, { error: "paymentMethod is required" });
+              return;
+            }
+
+            if (!paymentDetailsValue) {
+              sendJson(res, 400, { error: "paymentDetails is required" });
+              return;
+            }
+
+            profile.fullName = fullName;
+            profile.telegramContact = telegramContact;
+            profile.specializations = specializations;
+            profile.portfolio = portfolio;
+            profile.paymentMethod = paymentMethod;
+            profile.paymentDetails = { type: "text", value: paymentDetailsValue };
+            profile.unavailableDays = unavailableDays;
+            profile.unavailableTime = unavailableTime;
+            profile.updatedAt = new Date().toISOString();
+
+            await ensureExecutorCodeForProfile(profile);
+            await saveExecutorToDb(profile);
+            executors.set(profile.telegramId, profile);
+
+            sendJson(res, 200, { ok: true, executor: profile });
+          } catch (error) {
+            console.error("POST /api/executors/update error:", error);
+            sendJson(res, 500, { error: "Failed to update executor" });
+          }
+        });
+
+        return;
+      }
+
       if (req.method === "POST" && req.url === "/api/tasks") {
         let body = "";
 
