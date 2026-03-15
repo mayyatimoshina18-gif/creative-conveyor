@@ -398,91 +398,117 @@ async function saveExecutorToDb(profile) {
 }
 
 async function saveTaskToDb(task) {
-  const result = await runQuery(`
-    INSERT INTO tasks (
-      id,
-      manager_id,
-      manager_username,
-      manager_contact,
-      title,
-      categories,
-      deadline_date,
-      deadline_time,
-      deadline,
-      price,
-      brief,
-      sources,
-      refs_data,
-      comment,
-      status,
-      published_at,
-      assigned_executor_id,
-      assigned_executor_name,
-      assigned_executor_contact,
-      stage_materials,
-      timeline,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb,
-      $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22, NOW()
-    )
-    ON CONFLICT (id)
-    DO UPDATE SET
-      manager_id = EXCLUDED.manager_id,
-      manager_username = EXCLUDED.manager_username,
-      manager_contact = EXCLUDED.manager_contact,
-      title = EXCLUDED.title,
-      categories = EXCLUDED.categories,
-      deadline_date = EXCLUDED.deadline_date,
-      deadline_time = EXCLUDED.deadline_time,
-      deadline = EXCLUDED.deadline,
-      price = EXCLUDED.price,
-      brief = EXCLUDED.brief,
-      sources = EXCLUDED.sources,
-      refs_data = EXCLUDED.refs_data,
-      comment = EXCLUDED.comment,
-      status = EXCLUDED.status,
-      published_at = EXCLUDED.published_at,
-      assigned_executor_id = EXCLUDED.assigned_executor_id,
-      assigned_executor_name = EXCLUDED.assigned_executor_name,
-      assigned_executor_contact = EXCLUDED.assigned_executor_contact,
-      stage_materials = EXCLUDED.stage_materials,
-      timeline = EXCLUDED.timeline,
-      updated_at = NOW()
-    RETURNING id
-  `, [
-    task.id,
-    task.managerId,
-    task.managerUsername || null,
-    task.managerContact,
-    task.title || null,
-    JSON.stringify(task.categories || []),
-    task.deadlineDate || null,
-    task.deadlineTime || null,
-    task.deadline || null,
-    task.price || null,
-    task.brief ? JSON.stringify(task.brief) : null,
-    task.sources ? JSON.stringify(task.sources) : null,
-    task.refs_data ? JSON.stringify(task.refs_data) : null,
-    task.comment || null,
-    task.status || null,
-    task.publishedAt || null,
-    task.assignedExecutorId || null,
-    task.assignedExecutorName || null,
-    task.assignedExecutorContact || null,
-    JSON.stringify(task.stageMaterials || {}),
-    JSON.stringify(task.timeline || {}),
-    task.createdAt || new Date().toISOString()
-  ]);
+  let realId = task.id;
 
-  const realId = Number(result.rows[0].id);
-  if (task.id !== realId) {
+  if (!task.id) {
+    const insertResult = await runQuery(`
+      INSERT INTO tasks (
+        manager_id,
+        manager_username,
+        manager_contact,
+        title,
+        categories,
+        deadline_date,
+        deadline_time,
+        deadline,
+        price,
+        brief,
+        sources,
+        refs_data,
+        comment,
+        status,
+        published_at,
+        assigned_executor_id,
+        assigned_executor_name,
+        assigned_executor_contact,
+        stage_materials,
+        timeline,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb,
+        $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, NOW()
+      )
+      RETURNING id
+    `, [
+      task.managerId,
+      task.managerUsername || null,
+      task.managerContact,
+      task.title || null,
+      JSON.stringify(task.categories || []),
+      task.deadlineDate || null,
+      task.deadlineTime || null,
+      task.deadline || null,
+      task.price || null,
+      task.brief ? JSON.stringify(task.brief) : null,
+      task.sources ? JSON.stringify(task.sources) : null,
+      task.refs_data ? JSON.stringify(task.refs_data) : null,
+      task.comment || null,
+      task.status || null,
+      task.publishedAt || null,
+      task.assignedExecutorId || null,
+      task.assignedExecutorName || null,
+      task.assignedExecutorContact || null,
+      JSON.stringify(task.stageMaterials || {}),
+      JSON.stringify(task.timeline || {}),
+      task.createdAt || new Date().toISOString()
+    ]);
+
+    realId = Number(insertResult.rows[0].id);
     task.id = realId;
+  } else {
+    await runQuery(`
+      UPDATE tasks
+      SET
+        manager_id = $2,
+        manager_username = $3,
+        manager_contact = $4,
+        title = $5,
+        categories = $6::jsonb,
+        deadline_date = $7,
+        deadline_time = $8,
+        deadline = $9,
+        price = $10,
+        brief = $11::jsonb,
+        sources = $12::jsonb,
+        refs_data = $13::jsonb,
+        comment = $14,
+        status = $15,
+        published_at = $16,
+        assigned_executor_id = $17,
+        assigned_executor_name = $18,
+        assigned_executor_contact = $19,
+        stage_materials = $20::jsonb,
+        timeline = $21::jsonb,
+        updated_at = NOW()
+      WHERE id = $1
+    `, [
+      task.id,
+      task.managerId,
+      task.managerUsername || null,
+      task.managerContact,
+      task.title || null,
+      JSON.stringify(task.categories || []),
+      task.deadlineDate || null,
+      task.deadlineTime || null,
+      task.deadline || null,
+      task.price || null,
+      task.brief ? JSON.stringify(task.brief) : null,
+      task.sources ? JSON.stringify(task.sources) : null,
+      task.refs_data ? JSON.stringify(task.refs_data) : null,
+      task.comment || null,
+      task.status || null,
+      task.publishedAt || null,
+      task.assignedExecutorId || null,
+      task.assignedExecutorName || null,
+      task.assignedExecutorContact || null,
+      JSON.stringify(task.stageMaterials || {}),
+      JSON.stringify(task.timeline || {})
+    ]);
   }
 
-  await runQuery(`DELETE FROM task_responses WHERE task_id = $1`, [task.id]);
+  await runQuery(`DELETE FROM task_responses WHERE task_id = $1`, [realId]);
 
   for (const response of task.responses || []) {
     await runQuery(`
@@ -496,7 +522,7 @@ async function saveTaskToDb(task) {
       )
       VALUES ($1, $2, $3, $4, $5, $6)
     `, [
-      task.id,
+      realId,
       response.executorId,
       response.executorName,
       response.executorContact,
@@ -548,10 +574,7 @@ function sendTelegramRequest(method, payload, callback) {
 }
 
 function sendMessage(chatId, text, replyMarkup = null) {
-  const payload = {
-    chat_id: chatId,
-    text
-  };
+  const payload = { chat_id: chatId, text };
 
   if (replyMarkup) {
     payload.reply_markup = replyMarkup;
@@ -765,12 +788,12 @@ function normalizeCard(value) {
 
 function isValidPhone(value) {
   const normalized = normalizePhone(value);
-  return /^(\+7\d{10}|8\d{10})$/.test(normalized);
+  return /^(\+7\\d{10}|8\\d{10})$/.test(normalized);
 }
 
 function isValidCard(value) {
   const normalized = normalizeCard(value);
-  return /^\d{16}$/.test(normalized);
+  return /^\\d{16}$/.test(normalized);
 }
 
 function isValidTelegramContact(value) {
@@ -781,7 +804,7 @@ function isValidTelegramContact(value) {
 
 function isValidFullName(value) {
   if (!value) return false;
-  const parts = value.trim().split(/\s+/).filter(Boolean);
+  const parts = value.trim().split(/\\s+/).filter(Boolean);
   return parts.length >= 2 && parts.every(part => part.length >= 2);
 }
 
@@ -791,8 +814,9 @@ function isValidTransferDetails(value) {
 
 function isValidUnavailableTime(value) {
   if (!value || !value.trim()) return false;
+
   const lines = value
-    .split("\n")
+    .split("\\n")
     .map(line => line.trim())
     .filter(Boolean);
 
@@ -805,11 +829,11 @@ function isValidUnavailableTime(value) {
 }
 
 function isValidManualDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+  return /^\\d{4}-\\d{2}-\\d{2}$/.test(value.trim());
 }
 
 function isValidManualTime(value) {
-  return /^\d{2}:\d{2}$/.test(value.trim());
+  return /^\\d{2}:\\d{2}$/.test(value.trim());
 }
 
 function formatField(field, label = "Материал") {
@@ -819,7 +843,7 @@ function formatField(field, label = "Материал") {
 
   if (field.type === "document") {
     if (field.caption && field.caption.trim()) {
-      return `${label} прикреплено файлом.\nКомментарий: ${field.caption}`;
+      return `${label} прикреплено файлом.\\nКомментарий: ${field.caption}`;
     }
     return `${label} прикреплено файлом.`;
   }
@@ -835,38 +859,38 @@ function formatCategories(categories) {
 function formatTaskCard(task) {
   const assignedLine = task.assignedExecutorName
     ? `Исполнитель: ${task.assignedExecutorName} (${task.assignedExecutorContact || "—"})`
-    : `Исполнитель: —`;
+    : "Исполнитель: —";
 
   return [
     `Задача #${task.id}`,
-    ``,
+    "",
     `Название: ${task.title || "—"}`,
     `Категории: ${formatCategories(task.categories)}`,
     `Дедлайн: ${task.deadline || "—"}`,
     `Стоимость: ${task.price || "—"}`,
     `Статус: ${task.status || "—"}`,
-    `${assignedLine}`,
-    ``,
-    `ТЗ:`,
-    `${formatField(task.brief, "ТЗ")}`,
-    ``,
-    `Источники:`,
-    `${formatField(task.sources, "Источники")}`,
-    ``,
-    `Референсы:`,
-    `${formatField(task.refs_data, "Референсы")}`,
-    ``,
-    `Комментарий:`,
-    `${task.comment || "—"}`,
-    ``,
+    assignedLine,
+    "",
+    "ТЗ:",
+    formatField(task.brief, "ТЗ"),
+    "",
+    "Источники:",
+    formatField(task.sources, "Источники"),
+    "",
+    "Референсы:",
+    formatField(task.refs_data, "Референсы"),
+    "",
+    "Комментарий:",
+    task.comment || "—",
+    "",
     `Менеджер: ${task.managerContact}`
-  ].join("\n");
+  ].join("\\n");
 }
 
 function formatExecutorProfile(profile) {
   return [
-    `Анкета исполнителя`,
-    ``,
+    "Анкета исполнителя",
+    "",
     `Имя: ${profile.fullName || "—"}`,
     `Контакт: ${profile.telegramContact || "—"}`,
     `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
@@ -884,7 +908,7 @@ function formatExecutorProfile(profile) {
     `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
     `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
     `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
-  ].join("\n");
+  ].join("\\n");
 }
 
 function calculateBaseRating(accuracy, speed, aesthetics) {
@@ -1022,31 +1046,31 @@ function sendStageReminder(task, stageKey, attempt) {
   let inline_keyboard = [];
 
   if (stageKey === "read") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nОзнакомился ли ты с ТЗ по задаче #${task.id}?`;
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\\n\\nОзнакомился ли ты с ТЗ по задаче #${task.id}?`;
     inline_keyboard = [[
       { text: "Да", callback_data: `stage_read_yes_${task.id}` },
       { text: "Нет", callback_data: `stage_read_no_${task.id}` }
     ]];
   } else if (stageKey === "inwork") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВзял ли ты в работу задачу #${task.id}?`;
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\\n\\nВзял ли ты в работу задачу #${task.id}?`;
     inline_keyboard = [[
       { text: "Да", callback_data: `stage_inwork_yes_${task.id}` },
       { text: "Нет", callback_data: `stage_inwork_no_${task.id}` }
     ]];
   } else if (stageKey === "30") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 30% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\\n\\nГотовы ли 30% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
     inline_keyboard = [[
       { text: "Да, отправлю материал", callback_data: `stage_30_yes_${task.id}` },
       { text: "Ещё нет", callback_data: `stage_30_no_${task.id}` }
     ]];
   } else if (stageKey === "60") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 60% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\\n\\nГотовы ли 60% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
     inline_keyboard = [[
       { text: "Да, отправлю материал", callback_data: `stage_60_yes_${task.id}` },
       { text: "Ещё нет", callback_data: `stage_60_no_${task.id}` }
     ]];
   } else if (stageKey === "final") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВсё ли готово по задаче #${task.id}? Если да — отправь финальный материал ссылкой, текстом или файлом.`;
+    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\\n\\nВсё ли готово по задаче #${task.id}? Если да — отправь финальный материал ссылкой, текстом или файлом.`;
     inline_keyboard = [[
       { text: "Да, отправлю финал", callback_data: `stage_final_yes_${task.id}` },
       { text: "Ещё нет", callback_data: `stage_final_no_${task.id}` }
@@ -1063,7 +1087,7 @@ function startTaskCreation(chatId, from) {
     type: "create_task",
     step: "title",
     task: {
-      id: tasks.length ? Math.max(...tasks.map(t => t.id)) + 1 : 1,
+      id: null,
       createdAt: new Date().toISOString(),
       managerId: from?.id || null,
       managerUsername: from?.username || null,
@@ -1108,17 +1132,30 @@ function startTaskCreation(chatId, from) {
 }
 
 async function finishTaskCreation(chatId, state) {
-  state.task.deadline = `${state.task.deadlineDate} ${state.task.deadlineTime}`;
-  await saveTaskToDb(state.task);
-  userStates.delete(chatId);
+  try {
+    state.task.deadline = `${state.task.deadlineDate} ${state.task.deadlineTime}`;
+    await saveTaskToDb(state.task);
 
-  sendMessage(
-    chatId,
-    `Задача создана.\n\n${formatTaskCard(state.task)}`,
-    getTaskAfterCreateKeyboard()
-  );
+    const existingIndex = tasks.findIndex(t => t.id === state.task.id);
+    if (existingIndex === -1) {
+      tasks.push(state.task);
+    } else {
+      tasks[existingIndex] = state.task;
+    }
 
-  notifyTaskMaterials(chatId, state.task);
+    userStates.delete(chatId);
+
+    sendMessage(
+      chatId,
+      `Задача создана.\\n\\n${formatTaskCard(state.task)}`,
+      getTaskAfterCreateKeyboard()
+    );
+
+    notifyTaskMaterials(chatId, state.task);
+  } catch (error) {
+    console.error("finishTaskCreation error:", error);
+    sendMessage(chatId, "Не удалось сохранить задачу. Посмотри логи Render.");
+  }
 }
 
 async function handleTaskCreationStep(chatId, message, state) {
@@ -1148,6 +1185,7 @@ async function handleTaskCreationStep(chatId, message, state) {
         sendMessage(chatId, "Нужно выбрать хотя бы одну категорию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
         return;
       }
+
       state.step = "deadline_date";
       sendMessage(chatId, "Выбери дату дедлайна.", getDateKeyboard());
       return;
@@ -1233,6 +1271,7 @@ async function handleTaskCreationStep(chatId, message, state) {
       sendMessage(chatId, "Стоимость лучше отправить текстом.");
       return;
     }
+
     state.task.price = input.value.trim();
     state.step = "brief";
     sendMessage(chatId, "Отправь ТЗ. Это обязательное поле: можно текст, ссылку или файл.");
@@ -1325,8 +1364,8 @@ function notifyManagersAboutExecutor(profile) {
   if (managers.size === 0) return;
 
   const text = [
-    `Новая анкета исполнителя`,
-    ``,
+    "Новая анкета исполнителя",
+    "",
     `Имя: ${profile.fullName || "—"}`,
     `Контакт: ${profile.telegramContact || "—"}`,
     `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
@@ -1336,7 +1375,7 @@ function notifyManagersAboutExecutor(profile) {
     `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
     `Недоступное время: ${profile.unavailableTime || "—"}`,
     `Статус: ${profile.status || "—"}`
-  ].join("\n");
+  ].join("\\n");
 
   for (const managerChatId of managers) {
     sendMessage(managerChatId, text, getMainKeyboard(true));
@@ -1365,7 +1404,7 @@ async function finishExecutorRegistration(chatId, state) {
 
   sendMessage(
     chatId,
-    `Анкета сохранена и отправлена на модерацию.\n\n${formatExecutorProfile(state.profile)}`,
+    `Анкета сохранена и отправлена на модерацию.\\n\\n${formatExecutorProfile(state.profile)}`,
     getMainKeyboard(false, true)
   );
 
@@ -1397,7 +1436,7 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
       state.step = "telegram_contact";
       sendMessage(
         chatId,
-        "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\nПримеры:\n@mayya_design\n+79991234567"
+        "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\\nПримеры:\\n@mayya_design\\n+79991234567"
       );
       return;
     }
@@ -1412,7 +1451,7 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
     if (!input || input.type !== "text" || !isValidTelegramContact(input.value)) {
       sendMessage(
         chatId,
-        "Нужен корректный контакт для связи: @username или телефон Telegram.\nПримеры:\n@mayya_design\n+79991234567"
+        "Нужен корректный контакт для связи: @username или телефон Telegram.\\nПримеры:\\n@mayya_design\\n+79991234567"
       );
       return;
     }
@@ -1476,7 +1515,7 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
       state.step = "payment_details_transfer";
       sendMessage(
         chatId,
-        "Введи номер телефона или карты для выплаты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
+        "Введи номер телефона или карты для выплаты.\\nПримеры:\\n+79991234567\\n89991234567\\n5536 9141 2345 6789"
       );
       return;
     }
@@ -1495,7 +1534,7 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
     if (!isValidTransferDetails(input.value)) {
       sendMessage(
         chatId,
-        "Нужен корректный номер телефона или карты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
+        "Нужен корректный номер телефона или карты.\\nПримеры:\\n+79991234567\\n89991234567\\n5536 9141 2345 6789"
       );
       return;
     }
@@ -1541,7 +1580,7 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
       state.step = "unavailable_time";
       sendMessage(
         chatId,
-        "Если есть временные промежутки, когда ты не можешь брать задачи, введи по одной строке в таком формате:\nВторник 10:00-14:00\nСреда 18:00-22:00\nЕсли ограничений нет — нажми Пропустить.",
+        "Если есть временные промежутки, когда ты не можешь брать задачи, введи по одной строке в таком формате:\\nВторник 10:00-14:00\\nСреда 18:00-22:00\\nЕсли ограничений нет — нажми Пропустить.",
         getSkipKeyboard()
       );
       return;
@@ -1567,11 +1606,12 @@ async function handleExecutorRegistrationStep(chatId, message, state) {
       if (!isValidUnavailableTime(input.value)) {
         sendMessage(
           chatId,
-          "Неверный формат времени.\nВводи по одной строке так:\nВторник 10:00-14:00\nСреда 18:00-22:00",
+          "Неверный формат времени.\\nВводи по одной строке так:\\nВторник 10:00-14:00\\nСреда 18:00-22:00",
           getSkipKeyboard()
         );
         return;
       }
+
       state.profile.unavailableTime = input.value.trim();
     } else {
       sendMessage(chatId, "Напиши время текстом или нажми Пропустить.", getSkipKeyboard());
@@ -1588,7 +1628,7 @@ async function handleManagerContactStep(chatId, text, from) {
   if (!isValidTelegramContact(text)) {
     sendMessage(
       chatId,
-      "Нужен корректный контакт для связи: @username или телефон Telegram.\nПримеры:\n@mayya_design\n+79991234567"
+      "Нужен корректный контакт для связи: @username или телефон Telegram.\\nПримеры:\\n@mayya_design\\n+79991234567"
     );
     return;
   }
@@ -1607,6 +1647,7 @@ function ensureManagerContact(chatId, from) {
     saveManagerContactToDb(from.id, auto).catch(console.error);
     return true;
   }
+
   if (managerContacts.has(from.id)) return true;
 
   userStates.set(chatId, {
@@ -1616,7 +1657,7 @@ function ensureManagerContact(chatId, from) {
 
   sendMessage(
     chatId,
-    "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\nПримеры:\n@mayya_design\n+79991234567"
+    "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\\nПримеры:\\n@mayya_design\\n+79991234567"
   );
   return false;
 }
@@ -1642,7 +1683,7 @@ function showNextPendingExecutor(managerChatId) {
     reviewAesthetics: null
   });
 
-  sendMessage(managerChatId, `Заявка на модерацию\n\n${formatExecutorProfile(profile)}`, getModerationKeyboard());
+  sendMessage(managerChatId, `Заявка на модерацию\\n\\n${formatExecutorProfile(profile)}`, getModerationKeyboard());
 
   if (profile.paymentFile?.type === "document") {
     sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
@@ -1797,7 +1838,7 @@ async function handleManagerReviewStep(chatId, text, from, state) {
 
     sendMessage(
       executorChatId,
-      `Твоя анкета подтверждена.\n\n${formatExecutorProfile(profile)}`,
+      `Твоя анкета подтверждена.\\n\\n${formatExecutorProfile(profile)}`,
       getMainKeyboard(false, true)
     );
 
@@ -1807,7 +1848,7 @@ async function handleManagerReviewStep(chatId, text, from, state) {
 
     sendMessage(
       chatId,
-      `Исполнитель подтверждён.\n\nБазовый рейтинг: ${baseRating}\nБуст новичка: +${newcomerBoost}\nИтоговый рейтинг: ${finalRating}`,
+      `Исполнитель подтверждён.\\n\\nБазовый рейтинг: ${baseRating}\\nБуст новичка: +${newcomerBoost}\\nИтоговый рейтинг: ${finalRating}`,
       getMainKeyboard(true)
     );
   }
@@ -1837,7 +1878,7 @@ async function publishTaskToExecutors(managerChatId, task) {
   for (const profile of candidates) {
     sendMessage(
       profile.telegramId,
-      `Новая задача доступна.\n\n${formatTaskCard(task)}`,
+      `Новая задача доступна.\\n\\n${formatTaskCard(task)}`,
       inlineKeyboard
     );
     notifyTaskMaterials(profile.telegramId, task);
@@ -1845,7 +1886,7 @@ async function publishTaskToExecutors(managerChatId, task) {
 
   sendMessage(
     managerChatId,
-    `Задача #${task.id} опубликована исполнителям.\nПодходящих исполнителей: ${candidates.length}`,
+    `Задача #${task.id} опубликована исполнителям.\\nПодходящих исполнителей: ${candidates.length}`,
     getMainKeyboard(true)
   );
 }
@@ -1860,7 +1901,7 @@ function showResponsesForTask(managerChatId, task) {
 
   sendMessage(
     managerChatId,
-    `Отклики по задаче #${task.id}:\n${task.title}\n\nВыбери, кого назначить.`,
+    `Отклики по задаче #${task.id}:\\n${task.title}\\n\\nВыбери, кого назначить.`,
     getMainKeyboard(true)
   );
 
@@ -1875,7 +1916,7 @@ function showResponsesForTask(managerChatId, task) {
       `Рейтинг: ${typeof executor?.rating === "number" ? executor.rating : "—"}`,
       `Рекомендация системы: ${recommendation.label}`,
       `Скоринг рекомендации: ${recommendation.score}`
-    ].join("\n");
+    ].join("\\n");
 
     const inlineKeyboard = {
       inline_keyboard: [[{ text: "Назначить", callback_data: `assign_${task.id}_${response.executorId}` }]]
@@ -1922,7 +1963,7 @@ async function assignExecutorToTask(managerChatId, managerFromId, taskId, execut
 
   sendMessage(
     executorId,
-    `Тебе назначена задача.\n\n${formatTaskCard(task)}`,
+    `Тебе назначена задача.\\n\\n${formatTaskCard(task)}`,
     getExecutorTaskActionKeyboard(task)
   );
   notifyTaskMaterials(executorId, task);
@@ -1939,7 +1980,7 @@ async function assignExecutorToTask(managerChatId, managerFromId, taskId, execut
 
   sendMessage(
     managerChatId,
-    `Исполнитель назначен на задачу #${task.id}.\n\n${formatTaskCard(task)}`,
+    `Исполнитель назначен на задачу #${task.id}.\\n\\n${formatTaskCard(task)}`,
     getManagerReviewTaskKeyboard(task.id)
   );
 
@@ -1964,7 +2005,7 @@ async function updateTaskStatusByExecutor(chatId, taskId, action) {
     task.timeline.briefReadAt = new Date().toISOString();
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Статус обновлён: ТЗ изучено.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
+    sendMessage(chatId, `Статус обновлён: ТЗ изучено.\\n\\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
     sendMessage(task.managerId, `Исполнитель изучил ТЗ по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
 
     scheduleTaskReminder(task.id, "inwork");
@@ -1976,7 +2017,7 @@ async function updateTaskStatusByExecutor(chatId, taskId, action) {
     task.timeline.inWorkAt = new Date().toISOString();
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Статус обновлён: В работе.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
+    sendMessage(chatId, `Статус обновлён: В работе.\\n\\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
     sendMessage(task.managerId, `Исполнитель взял задачу #${task.id} в работу.`, getManagerReviewTaskKeyboard(task.id));
 
     scheduleTaskReminder(task.id, "30");
@@ -1988,7 +2029,7 @@ async function updateTaskStatusByExecutor(chatId, taskId, action) {
     task.timeline.submittedAt = new Date().toISOString();
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Исправленная задача отправлена на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Исправленная задача отправлена на проверку.\\n\\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
     sendMessage(task.managerId, `Исполнитель повторно сдал задачу #${task.id} после правок.`, getManagerReviewTaskKeyboard(task.id));
     return;
   }
@@ -2046,10 +2087,13 @@ async function handleTaskStageMaterial(chatId, message, state) {
     userStates.delete(chatId);
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Материал 30% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Материал 30% отправлен.\\n\\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
     sendMessage(task.managerId, `Исполнитель отправил этап 30% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Материал 30% по задаче #${task.id}`);
-    else sendMessage(task.managerId, `Материал 30%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") {
+      sendDocument(task.managerId, input.file_id, `Материал 30% по задаче #${task.id}`);
+    } else {
+      sendMessage(task.managerId, `Материал 30%:\\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    }
 
     scheduleTaskReminder(task.id, "60");
     return;
@@ -2062,10 +2106,13 @@ async function handleTaskStageMaterial(chatId, message, state) {
     userStates.delete(chatId);
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Материал 60% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Материал 60% отправлен.\\n\\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
     sendMessage(task.managerId, `Исполнитель отправил этап 60% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Материал 60% по задаче #${task.id}`);
-    else sendMessage(task.managerId, `Материал 60%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") {
+      sendDocument(task.managerId, input.file_id, `Материал 60% по задаче #${task.id}`);
+    } else {
+      sendMessage(task.managerId, `Материал 60%:\\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    }
 
     scheduleTaskReminder(task.id, "final");
     return;
@@ -2078,10 +2125,13 @@ async function handleTaskStageMaterial(chatId, message, state) {
     userStates.delete(chatId);
     await saveTaskToDb(task);
 
-    sendMessage(chatId, `Финальный материал отправлен на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Финальный материал отправлен на проверку.\\n\\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
     sendMessage(task.managerId, `Исполнитель сдал задачу #${task.id} на проверку.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") sendDocument(task.managerId, input.file_id, `Финальный материал по задаче #${task.id}`);
-    else sendMessage(task.managerId, `Финальный материал:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    if (input.type === "document") {
+      sendDocument(task.managerId, input.file_id, `Финальный материал по задаче #${task.id}`);
+    } else {
+      sendMessage(task.managerId, `Финальный материал:\\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
+    }
 
     clearTaskReminder(task.id);
   }
@@ -2099,7 +2149,7 @@ async function managerApproveTask(chatId, managerId, taskId) {
   clearTaskReminder(task.id);
   await saveTaskToDb(task);
 
-  sendMessage(chatId, `Результат по задаче #${task.id} принят.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
+  sendMessage(chatId, `Результат по задаче #${task.id} принят.\\n\\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
   sendMessage(task.assignedExecutorId, `Менеджер принял результат по задаче #${task.id}.`, getMainKeyboard(false, true));
 }
 
@@ -2115,7 +2165,7 @@ async function managerSendFixes(chatId, managerId, taskId) {
   clearTaskReminder(task.id);
   await saveTaskToDb(task);
 
-  sendMessage(chatId, `Задача #${task.id} отправлена на правки.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
+  sendMessage(chatId, `Задача #${task.id} отправлена на правки.\\n\\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
   sendMessage(task.assignedExecutorId, `По задаче #${task.id} пришли правки. Свяжись с менеджером: ${task.managerContact}`, getExecutorTaskActionKeyboard(task));
 
   scheduleTaskReminder(task.id, "final");
@@ -2132,7 +2182,7 @@ async function managerMarkUnpaid(chatId, managerId, taskId) {
   task.timeline.unpaidAt = new Date().toISOString();
   await saveTaskToDb(task);
 
-  sendMessage(chatId, `Задача #${task.id} отмечена как не оплачена.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
+  sendMessage(chatId, `Задача #${task.id} отмечена как не оплачена.\\n\\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
   sendMessage(task.assignedExecutorId, `По задаче #${task.id} статус оплаты: не оплачена.`, getMainKeyboard(false, true));
 }
 
@@ -2147,7 +2197,7 @@ async function managerMarkPaid(chatId, managerId, taskId) {
   task.timeline.paidAt = new Date().toISOString();
   await saveTaskToDb(task);
 
-  sendMessage(chatId, `Задача #${task.id} отмечена как оплачена.\n\n${formatTaskCard(task)}`, getMainKeyboard(true));
+  sendMessage(chatId, `Задача #${task.id} отмечена как оплачена.\\n\\n${formatTaskCard(task)}`, getMainKeyboard(true));
   sendMessage(task.assignedExecutorId, `По задаче #${task.id} статус оплаты: оплачена.`, getMainKeyboard(false, true));
 }
 
@@ -2188,31 +2238,31 @@ async function handleTextMessage(chatId, text, from, message) {
     return;
   }
 
-  const actionMatch = text?.match(/^Действие по задаче #(\d+):\s(.+)$/);
+  const actionMatch = text?.match(/^Действие по задаче #(\\d+):\\s(.+)$/);
   if (actionMatch) {
     await updateTaskStatusByExecutor(chatId, Number(actionMatch[1]), actionMatch[2]);
     return;
   }
 
-  const approveMatch = text?.match(/^Принять результат #(\d+)$/);
+  const approveMatch = text?.match(/^Принять результат #(\\d+)$/);
   if (approveMatch && managers.has(chatId)) {
     await managerApproveTask(chatId, chatId, Number(approveMatch[1]));
     return;
   }
 
-  const fixesMatch = text?.match(/^Отправить на правки #(\d+)$/);
+  const fixesMatch = text?.match(/^Отправить на правки #(\\d+)$/);
   if (fixesMatch && managers.has(chatId)) {
     await managerSendFixes(chatId, chatId, Number(fixesMatch[1]));
     return;
   }
 
-  const unpaidMatch = text?.match(/^Отметить не оплачена #(\d+)$/);
+  const unpaidMatch = text?.match(/^Отметить не оплачена #(\\d+)$/);
   if (unpaidMatch && managers.has(chatId)) {
     await managerMarkUnpaid(chatId, chatId, Number(unpaidMatch[1]));
     return;
   }
 
-  const paidMatch = text?.match(/^Отметить оплачена #(\d+)$/);
+  const paidMatch = text?.match(/^Отметить оплачена #(\\d+)$/);
   if (paidMatch && managers.has(chatId)) {
     await managerMarkPaid(chatId, chatId, Number(paidMatch[1]));
     return;
@@ -2224,7 +2274,7 @@ async function handleTextMessage(chatId, text, from, message) {
     if (executorProfile) {
       sendMessage(
         chatId,
-        `Режим исполнителя включён.\n\n${formatExecutorProfile(executorProfile)}`,
+        `Режим исполнителя включён.\\n\\n${formatExecutorProfile(executorProfile)}`,
         getMainKeyboard(false, true)
       );
       return;
@@ -2262,7 +2312,7 @@ async function handleTextMessage(chatId, text, from, message) {
 
     const relevantTasks = tasks.filter(task => {
       return (
-        task.status === "Ждёт исполнителя" &&
+        (task.status === "Ждёт исполнителя" || task.status === "Есть отклики") &&
         executorProfile.verifiedSpecializations?.some(spec => task.categories.includes(spec))
       );
     });
@@ -2274,9 +2324,9 @@ async function handleTextMessage(chatId, text, from, message) {
 
     const summary = relevantTasks
       .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.deadline} | ${task.price}`)
-      .join("\n");
+      .join("\\n");
 
-    sendMessage(chatId, `Новые задачи:\n\n${summary}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Новые задачи:\\n\\n${summary}`, getMainKeyboard(false, true));
     return;
   }
 
@@ -2295,9 +2345,9 @@ async function handleTextMessage(chatId, text, from, message) {
 
     const summary = history
       .map(item => `#${item.taskId} — ${item.taskTitle} | ${item.decision}`)
-      .join("\n");
+      .join("\\n");
 
-    sendMessage(chatId, `Твои отклики:\n\n${summary}`, getMainKeyboard(false, true));
+    sendMessage(chatId, `Твои отклики:\\n\\n${summary}`, getMainKeyboard(false, true));
     return;
   }
 
@@ -2357,9 +2407,9 @@ async function handleTextMessage(chatId, text, from, message) {
 
       const summary = managerTasks
         .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.status} | отклики: ${task.responses?.length || 0}`)
-        .join("\n");
+        .join("\\n");
 
-      sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
+      sendMessage(chatId, `Твои задачи:\\n\\n${summary}`, getMainKeyboard(true));
       return;
     }
 
@@ -2509,7 +2559,7 @@ async function handleCallbackQuery(callbackQuery) {
 
   sendMessage(
     task.managerId,
-    `Новый отклик по задаче #${task.id}.\n\nИсполнитель: ${executor.fullName}\nКонтакт: ${getExecutorContactFromProfile(executor)}\nРешение: ${decision}`,
+    `Новый отклик по задаче #${task.id}.\\n\\nИсполнитель: ${executor.fullName}\\nКонтакт: ${getExecutorContactFromProfile(executor)}\\nРешение: ${decision}`,
     getMainKeyboard(true)
   );
 
