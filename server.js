@@ -41,6 +41,27 @@ function generateExecutorCode() {
   return result;
 }
 
+async function ensureExecutorCodeForProfile(profile) {
+  if (profile?.executorCode) {
+    return profile;
+  }
+
+  let executorCode = generateExecutorCode();
+  while (Array.from(executors.values()).some(item => item !== profile && item.executorCode === executorCode)) {
+    executorCode = generateExecutorCode();
+  }
+
+  profile.executorCode = executorCode;
+  profile.updatedAt = new Date().toISOString();
+
+  if (profile.telegramId) {
+    await saveExecutorToDb(profile);
+    executors.set(profile.telegramId, profile);
+  }
+
+  return profile;
+}
+
 
 const DATE_OPTION_VALUES = {
   "Сегодня": 0,
@@ -2792,6 +2813,8 @@ async function bootstrap() {
               sendJson(res, 404, { error: "Executor not found" });
               return;
             }
+
+            await ensureExecutorCodeForProfile(profile);
 
             sendJson(res, 200, { ok: true, executor: profile });
           } catch (error) {
