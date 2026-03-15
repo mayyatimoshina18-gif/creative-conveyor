@@ -37,6 +37,8 @@ type TasksResponse = {
 
 const API_BASE = "https://creative-conveyor-backend.onrender.com";
 
+const SPECIALIZATION_OPTIONS = ["Статика", "Моушен", "Лендинги"];
+
 const topTabs = [
   { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
   { key: "active", label: "Активные", icon: Clock3 },
@@ -124,6 +126,15 @@ function TaskCard({ task }: { task: Task }) {
   );
 }
 
+function FormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+    />
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<"welcome" | "managerPassword" | "managerApp">("welcome");
   const [password, setPassword] = useState("");
@@ -138,6 +149,17 @@ export default function App() {
   });
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
+
+  const [createTitle, setCreateTitle] = useState("");
+  const [createCategories, setCreateCategories] = useState<string[]>([]);
+  const [createDeadlineDate, setCreateDeadlineDate] = useState("");
+  const [createDeadlineTime, setCreateDeadlineTime] = useState("");
+  const [createPrice, setCreatePrice] = useState("");
+  const [createManagerContact, setCreateManagerContact] = useState("@YYT1M");
+  const [createComment, setCreateComment] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
 
@@ -182,6 +204,96 @@ export default function App() {
     }
     setPasswordError("");
     setScreen("managerApp");
+  };
+
+  const toggleCategory = (category: string) => {
+    setCreateCategories((prev) =>
+      prev.includes(category) ? prev.filter((item) => item !== category) : [...prev, category]
+    );
+  };
+
+  const resetCreateForm = () => {
+    setCreateTitle("");
+    setCreateCategories([]);
+    setCreateDeadlineDate("");
+    setCreateDeadlineTime("");
+    setCreatePrice("");
+    setCreateComment("");
+    setCreateError("");
+    setCreateSuccess("");
+  };
+
+  const handleCreateTask = async () => {
+    if (!createTitle.trim()) {
+      setCreateError("Введите название задачи");
+      return;
+    }
+
+    if (!createCategories.length) {
+      setCreateError("Выберите хотя бы одну категорию");
+      return;
+    }
+
+    if (!createDeadlineDate.trim()) {
+      setCreateError("Введите дату дедлайна");
+      return;
+    }
+
+    if (!createDeadlineTime.trim()) {
+      setCreateError("Введите время дедлайна");
+      return;
+    }
+
+    if (!createPrice.trim()) {
+      setCreateError("Введите стоимость");
+      return;
+    }
+
+    if (!createManagerContact.trim()) {
+      setCreateError("Введите контакт менеджера");
+      return;
+    }
+
+    try {
+      setIsCreating(true);
+      setCreateError("");
+      setCreateSuccess("");
+
+      const response = await fetch(`${API_BASE}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          managerId: 0,
+          managerUsername: null,
+          managerContact: createManagerContact.trim(),
+          title: createTitle.trim(),
+          categories: createCategories,
+          deadlineDate: createDeadlineDate.trim(),
+          deadlineTime: createDeadlineTime.trim(),
+          price: createPrice.trim(),
+          comment: createComment.trim() || null
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to create task");
+      }
+
+      setCreateSuccess("Задача создана");
+      resetCreateForm();
+      await loadTasks();
+      setActiveBottomTab("tasks");
+      setActiveTopTab("waiting");
+    } catch (error) {
+      console.error("Failed to create task:", error);
+      setCreateError("Не удалось создать задачу");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -246,12 +358,11 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                <input
+                <FormInput
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Пароль"
-                  className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
                 />
                 {passwordError ? (
                   <div className="px-1 text-sm text-rose-300">{passwordError}</div>
@@ -282,7 +393,7 @@ export default function App() {
                       Креативный конвейер ЛЭНД
                     </div>
                     <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">
-                      Задачи
+                      {activeBottomTab === "create" ? "Создать задачу" : "Задачи"}
                     </div>
                   </div>
                   <button
@@ -293,26 +404,28 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
-                  {topTabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const active = activeTopTab === tab.key;
+                {activeBottomTab === "tasks" && (
+                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    {topTabs.map((tab) => {
+                      const Icon = tab.icon;
+                      const active = activeTopTab === tab.key;
 
-                    return (
-                      <button
-                        key={tab.key}
-                        onClick={() => setActiveTopTab(tab.key as typeof activeTopTab)}
-                        className={cn(
-                          "rounded-[18px] px-3 py-3 text-left transition",
-                          active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                        )}
-                      >
-                        <Icon className="mb-2 h-4 w-4" />
-                        <div className="text-[12px] font-medium leading-4">{tab.label}</div>
-                      </button>
-                    );
-                  })}
-                </div>
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => setActiveTopTab(tab.key as typeof activeTopTab)}
+                          className={cn(
+                            "rounded-[18px] px-3 py-3 text-left transition",
+                            active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                          )}
+                        >
+                          <Icon className="mb-2 h-4 w-4" />
+                          <div className="text-[12px] font-medium leading-4">{tab.label}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 px-5 pb-28 pt-4">
@@ -356,6 +469,90 @@ export default function App() {
                       </div>
                     )}
                   </>
+                ) : activeBottomTab === "create" ? (
+                  <div className="space-y-3">
+                    <FormInput
+                      value={createTitle}
+                      onChange={(e) => setCreateTitle(e.target.value)}
+                      placeholder="Название задачи"
+                    />
+
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-3 text-sm text-white/55">Категории</div>
+                      <div className="flex flex-wrap gap-2">
+                        {SPECIALIZATION_OPTIONS.map((item) => {
+                          const active = createCategories.includes(item);
+
+                          return (
+                            <button
+                              key={item}
+                              onClick={() => toggleCategory(item)}
+                              className={cn(
+                                "rounded-full border px-3 py-2 text-sm transition",
+                                active
+                                  ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
+                                  : "border-white/10 bg-white/5 text-white/65"
+                              )}
+                            >
+                              {item}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <FormInput
+                      type="date"
+                      value={createDeadlineDate}
+                      onChange={(e) => setCreateDeadlineDate(e.target.value)}
+                      placeholder="Дата дедлайна"
+                    />
+
+                    <FormInput
+                      type="time"
+                      value={createDeadlineTime}
+                      onChange={(e) => setCreateDeadlineTime(e.target.value)}
+                      placeholder="Время дедлайна"
+                    />
+
+                    <FormInput
+                      value={createPrice}
+                      onChange={(e) => setCreatePrice(e.target.value)}
+                      placeholder="Стоимость"
+                    />
+
+                    <FormInput
+                      value={createManagerContact}
+                      onChange={(e) => setCreateManagerContact(e.target.value)}
+                      placeholder="Контакт менеджера"
+                    />
+
+                    <FormInput
+                      value={createComment}
+                      onChange={(e) => setCreateComment(e.target.value)}
+                      placeholder="Комментарий (необязательно)"
+                    />
+
+                    {createError ? (
+                      <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                        {createError}
+                      </div>
+                    ) : null}
+
+                    {createSuccess ? (
+                      <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+                        {createSuccess}
+                      </div>
+                    ) : null}
+
+                    <button
+                      onClick={handleCreateTask}
+                      disabled={isCreating}
+                      className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                    >
+                      {isCreating ? "Создаю..." : "Создать задачу"}
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">
                     Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.
