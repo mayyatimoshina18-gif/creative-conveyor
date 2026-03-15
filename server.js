@@ -1087,7 +1087,7 @@ function serializeExecutorProfile(profile) {
   };
 }
 
-function findExecutorByTelegramId(telegramId) {(telegramId) {
+function findExecutorByTelegramId(telegramId) {
   const profile = executors.get(telegramId);
   if (!profile) return null;
   return { chatId: telegramId, profile };
