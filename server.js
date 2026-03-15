@@ -30,6 +30,39 @@ const DAY_OPTIONS = [
 ];
 const PAYMENT_OPTIONS = ["Самозанятость", "ИП", "Переводом"];
 
+function generateExecutorCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "EX-";
+
+  for (let i = 0; i < 6; i += 1) {
+    result += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+
+  return result;
+}
+
+async function ensureExecutorCodeForProfile(profile) {
+  if (profile?.executorCode) {
+    return profile;
+  }
+
+  let executorCode = generateExecutorCode();
+  while (Array.from(executors.values()).some(item => item !== profile && item.executorCode === executorCode)) {
+    executorCode = generateExecutorCode();
+  }
+
+  profile.executorCode = executorCode;
+  profile.updatedAt = new Date().toISOString();
+
+  if (profile.telegramId) {
+    await saveExecutorToDb(profile);
+    executors.set(profile.telegramId, profile);
+  }
+
+  return profile;
+}
+
+
 const DATE_OPTION_VALUES = {
   "Сегодня": 0,
   "Завтра": 1,
@@ -83,6 +116,7 @@ async function initDb() {
       telegram_id BIGINT PRIMARY KEY,
       username TEXT,
       telegram_contact TEXT NOT NULL,
+      executor_code TEXT UNIQUE,
       full_name TEXT,
       specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
       verified_specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -105,6 +139,21 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await runQuery(`
+    ALTER TABLE executors
+    ADD COLUMN IF NOT EXISTS executor_code TEXT
+  `);
+
+  await runQuery(`
+    ALTER TABLE executors
+    ADD COLUMN IF NOT EXISTS completed_orders INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await runQuery(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_executors_executor_code
+    ON executors(executor_code)
   `);
 
   await runQuery(`
@@ -243,6 +292,7 @@ async function loadExecutorsFromDb() {
   for (const row of result.rows) {
     executors.set(Number(row.telegram_id), {
       telegramId: Number(row.telegram_id),
+      executorCode: row.executor_code,
       username: row.username,
       telegramContact: row.telegram_contact,
       fullName: row.full_name,
@@ -263,6 +313,7 @@ async function loadExecutorsFromDb() {
       baseRating: row.base_rating,
       newcomerBoost: row.newcomer_boost,
       rating: row.rating,
+      completedOrders: row.completed_orders || 0,
       responseHistory: row.response_history || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -370,6 +421,7 @@ async function saveExecutorToDb(profile) {
       telegram_id,
       username,
       telegram_contact,
+      executor_code,
       full_name,
       specializations,
       verified_specializations,
@@ -388,18 +440,21 @@ async function saveExecutorToDb(profile) {
       base_rating,
       newcomer_boost,
       rating,
+      completed_orders,
       response_history,
       created_at,
       updated_at
     )
     VALUES (
-      $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9::jsonb, $10::jsonb,
-      $11::jsonb, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, NOW()
+      $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb,
+      $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+      $24::jsonb, $25, NOW()
     )
     ON CONFLICT (telegram_id)
     DO UPDATE SET
       username = EXCLUDED.username,
       telegram_contact = EXCLUDED.telegram_contact,
+      executor_code = EXCLUDED.executor_code,
       full_name = EXCLUDED.full_name,
       specializations = EXCLUDED.specializations,
       verified_specializations = EXCLUDED.verified_specializations,
@@ -418,12 +473,14 @@ async function saveExecutorToDb(profile) {
       base_rating = EXCLUDED.base_rating,
       newcomer_boost = EXCLUDED.newcomer_boost,
       rating = EXCLUDED.rating,
+      completed_orders = EXCLUDED.completed_orders,
       response_history = EXCLUDED.response_history,
       updated_at = NOW()
   `, [
     profile.telegramId,
     profile.username || null,
     profile.telegramContact,
+    profile.executorCode || null,
     profile.fullName || null,
     JSON.stringify(profile.specializations || []),
     JSON.stringify(profile.verifiedSpecializations || []),
@@ -442,6 +499,7 @@ async function saveExecutorToDb(profile) {
     profile.baseRating ?? null,
     profile.newcomerBoost ?? null,
     profile.rating ?? null,
+    profile.completedOrders ?? 0,
     JSON.stringify(profile.responseHistory || []),
     profile.createdAt || new Date().toISOString()
   ]);
@@ -941,6 +999,7 @@ function formatExecutorProfile(profile) {
   return [
     "Анкета исполнителя",
     "",
+    `ID исполнителя: ${profile.executorCode || "—"}`,
     `Имя: ${profile.fullName || "—"}`,
     `Контакт: ${profile.telegramContact || "—"}`,
     `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
@@ -962,7 +1021,7 @@ function formatExecutorProfile(profile) {
 }
 
 function calculateBaseRating(accuracy, speed, aesthetics) {
-  const startScore = accuracy * 0.4 + speed * 0.4 + aesthetics * 0.2;
+  const startScore = accuracy * 0.5 + speed * 0.35 + aesthetics * 0.15;
   return Math.round(startScore * 20);
 }
 
@@ -996,7 +1055,39 @@ function getPendingExecutors() {
   return Array.from(executors.values()).filter(profile => profile.status === "На модерации");
 }
 
-function findExecutorByTelegramId(telegramId) {
+function getApprovedExecutors() {
+  return Array.from(executors.values()).filter(profile => profile.status === "Подтверждён");
+}
+
+function serializeExecutorProfile(profile) {
+  return {
+    telegramId: profile.telegramId,
+    executorCode: profile.executorCode || null,
+    username: profile.username || null,
+    telegramContact: profile.telegramContact || null,
+    fullName: profile.fullName || null,
+    specializations: profile.specializations || [],
+    verifiedSpecializations: profile.verifiedSpecializations || [],
+    portfolio: profile.portfolio || null,
+    paymentMethod: profile.paymentMethod || null,
+    paymentDetails: profile.paymentDetails || null,
+    unavailableDays: profile.unavailableDays || [],
+    unavailableTime: profile.unavailableTime || "",
+    status: profile.status || null,
+    approvedBy: profile.approvedBy || null,
+    approvedByManagerId: profile.approvedByManagerId || null,
+    reviewAccuracy: profile.reviewAccuracy ?? null,
+    reviewSpeed: profile.reviewSpeed ?? null,
+    reviewAesthetics: profile.reviewAesthetics ?? null,
+    baseRating: profile.baseRating ?? null,
+    newcomerBoost: profile.newcomerBoost ?? null,
+    rating: profile.rating ?? null,
+    completedOrders: profile.completedOrders ?? 0,
+    responseHistory: profile.responseHistory || []
+  };
+}
+
+function findExecutorByTelegramId(telegramId) {(telegramId) {
   const profile = executors.get(telegramId);
   if (!profile) return null;
   return { chatId: telegramId, profile };
@@ -1458,6 +1549,7 @@ function startExecutorRegistration(chatId, from, existing = null) {
     step: "name",
     profile: {
       telegramId: from?.id || null,
+      executorCode: existing?.executorCode || generateExecutorCode(),
       username: from?.username || null,
       telegramContact: autoContact,
       fullName: existing?.fullName || "",
@@ -1478,6 +1570,7 @@ function startExecutorRegistration(chatId, from, existing = null) {
       baseRating: typeof existing?.baseRating === "number" ? existing.baseRating : null,
       newcomerBoost: typeof existing?.newcomerBoost === "number" ? existing.newcomerBoost : null,
       rating: typeof existing?.rating === "number" ? existing.rating : null,
+      completedOrders: existing?.completedOrders || 0,
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       responseHistory: existing?.responseHistory || []
@@ -2718,7 +2811,120 @@ async function bootstrap() {
         return;
       }
 
-            if (req.method === "GET" && req.url === "/api/tasks") {
+            if (req.method === "GET" && req.url === "/api/executors/pending") {
+        try {
+          const list = getPendingExecutors().map(serializeExecutorProfile);
+          sendJson(res, 200, { ok: true, executors: list });
+        } catch (error) {
+          console.error("GET /api/executors/pending error:", error);
+          sendJson(res, 500, { error: "Failed to load pending executors" });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/api/executors/approved") {
+        try {
+          const list = getApprovedExecutors()
+            .sort((a, b) => {
+              const ratingDiff = (b.rating || 0) - (a.rating || 0);
+              if (ratingDiff !== 0) return ratingDiff;
+              return (b.completedOrders || 0) - (a.completedOrders || 0);
+            })
+            .map(serializeExecutorProfile);
+          sendJson(res, 200, { ok: true, executors: list });
+        } catch (error) {
+          console.error("GET /api/executors/approved error:", error);
+          sendJson(res, 500, { error: "Failed to load approved executors" });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/executors/moderate") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+            const decision = String(payload.decision || "").trim();
+            const profile = executors.get(telegramId);
+
+            if (!telegramId || !profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            if (decision !== "approve" && decision !== "reject") {
+              sendJson(res, 400, { error: "Invalid decision" });
+              return;
+            }
+
+            const managerContact = payload.managerContact ? String(payload.managerContact).trim() : "Менеджер";
+            const managerTelegramId = Number(payload.managerTelegramId || 0) || null;
+
+            if (decision === "reject") {
+              profile.status = "Отклонён";
+              profile.approvedBy = managerContact;
+              profile.approvedByManagerId = managerTelegramId;
+              profile.updatedAt = new Date().toISOString();
+              await saveExecutorToDb(profile);
+              executors.set(profile.telegramId, profile);
+              sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
+              return;
+            }
+
+            const verifiedSpecializations = Array.isArray(payload.verifiedSpecializations)
+              ? payload.verifiedSpecializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const reviewAccuracy = Number(payload.reviewAccuracy);
+            const reviewSpeed = Number(payload.reviewSpeed);
+            const reviewAesthetics = Number(payload.reviewAesthetics);
+
+            if (!verifiedSpecializations.length) {
+              sendJson(res, 400, { error: "verifiedSpecializations is required" });
+              return;
+            }
+
+            if (![reviewAccuracy, reviewSpeed, reviewAesthetics].every(v => Number.isInteger(v) && v >= 1 && v <= 5)) {
+              sendJson(res, 400, { error: "Invalid review scores" });
+              return;
+            }
+
+            const baseRating = calculateBaseRating(reviewAccuracy, reviewSpeed, reviewAesthetics);
+            const newcomerBoost = 0;
+            const finalRating = baseRating + newcomerBoost;
+
+            profile.status = "Подтверждён";
+            profile.approvedBy = managerContact;
+            profile.approvedByManagerId = managerTelegramId;
+            profile.verifiedSpecializations = verifiedSpecializations;
+            profile.reviewAccuracy = reviewAccuracy;
+            profile.reviewSpeed = reviewSpeed;
+            profile.reviewAesthetics = reviewAesthetics;
+            profile.baseRating = baseRating;
+            profile.newcomerBoost = newcomerBoost;
+            profile.rating = finalRating;
+            profile.completedOrders = profile.completedOrders || 0;
+            profile.updatedAt = new Date().toISOString();
+
+            await saveExecutorToDb(profile);
+            executors.set(profile.telegramId, profile);
+
+            sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
+          } catch (error) {
+            console.error("POST /api/executors/moderate error:", error);
+            sendJson(res, 500, { error: "Failed to moderate executor" });
+          }
+        });
+
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/api/tasks") {
         try {
           const groupedTasks = getMiniappTasksGrouped();
           sendJson(res, 200, groupedTasks);
@@ -2726,6 +2932,207 @@ async function bootstrap() {
           console.error("GET /api/tasks error:", error);
           sendJson(res, 500, { error: "Failed to load tasks" });
         }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/executors/me") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+
+            if (!telegramId) {
+              sendJson(res, 400, { error: "telegramId is required" });
+              return;
+            }
+
+            const profile = executors.get(telegramId);
+
+            if (!profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            await ensureExecutorCodeForProfile(profile);
+
+            sendJson(res, 200, { ok: true, executor: profile });
+          } catch (error) {
+            console.error("POST /api/executors/me error:", error);
+            sendJson(res, 500, { error: "Failed to load executor" });
+          }
+        });
+
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/executors/login-by-code") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const executorCode = String(payload.executorCode || "").trim().toUpperCase();
+
+            if (!executorCode) {
+              sendJson(res, 400, { error: "executorCode is required" });
+              return;
+            }
+
+            const profile = Array.from(executors.values()).find(
+              item => String(item.executorCode || "").toUpperCase() === executorCode
+            );
+
+            if (!profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            const newTelegramId = Number(payload.telegramId || 0) || null;
+            const newUsername = payload.username ? String(payload.username) : null;
+            const newTelegramContact = payload.telegramContact ? String(payload.telegramContact).trim() : null;
+            const oldTelegramId = profile.telegramId;
+
+            if (newTelegramId && oldTelegramId !== newTelegramId) {
+              await runQuery(`DELETE FROM executors WHERE telegram_id = $1`, [oldTelegramId]);
+              executors.delete(oldTelegramId);
+              profile.telegramId = newTelegramId;
+            }
+
+            if (newUsername !== null) {
+              profile.username = newUsername;
+            }
+
+            if (newTelegramContact) {
+              profile.telegramContact = newTelegramContact;
+            }
+
+            profile.updatedAt = new Date().toISOString();
+
+            if (profile.telegramId) {
+              await saveExecutorToDb(profile);
+              executors.set(profile.telegramId, profile);
+            }
+
+            sendJson(res, 200, { ok: true, executor: profile });
+          } catch (error) {
+            console.error("POST /api/executors/login-by-code error:", error);
+            sendJson(res, 500, { error: "Failed to login executor" });
+          }
+        });
+
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/executors/register") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+
+            const telegramId = Number(payload.telegramId || 0) || null;
+            const username = payload.username ? String(payload.username) : null;
+            const telegramContact = String(payload.telegramContact || "").trim();
+            const fullName = String(payload.fullName || "").trim();
+            const specializations = Array.isArray(payload.specializations)
+              ? payload.specializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const portfolio = payload.portfolio ? String(payload.portfolio) : null;
+            const paymentMethod = String(payload.paymentMethod || "").trim();
+            const paymentDetailsValue = String(payload.paymentDetails || "").trim();
+            const unavailableDays = Array.isArray(payload.unavailableDays)
+              ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const unavailableTime = payload.unavailableTime ? String(payload.unavailableTime) : "";
+
+            if (!telegramContact) {
+              sendJson(res, 400, { error: "telegramContact is required" });
+              return;
+            }
+
+            if (!fullName) {
+              sendJson(res, 400, { error: "fullName is required" });
+              return;
+            }
+
+            if (!specializations.length) {
+              sendJson(res, 400, { error: "At least one specialization is required" });
+              return;
+            }
+
+            if (!paymentMethod) {
+              sendJson(res, 400, { error: "paymentMethod is required" });
+              return;
+            }
+
+            if (!paymentDetailsValue) {
+              sendJson(res, 400, { error: "paymentDetails is required" });
+              return;
+            }
+
+            let executorCode = generateExecutorCode();
+            while (Array.from(executors.values()).some(item => item.executorCode === executorCode)) {
+              executorCode = generateExecutorCode();
+            }
+
+            const profile = {
+              telegramId,
+              executorCode,
+              username,
+              telegramContact,
+              fullName,
+              specializations,
+              verifiedSpecializations: [],
+              portfolio,
+              paymentMethod,
+              paymentDetails: { type: "text", value: paymentDetailsValue },
+              paymentFile: null,
+              unavailableDays,
+              unavailableTime,
+              status: "На модерации",
+              approvedBy: null,
+              approvedByManagerId: null,
+              reviewAccuracy: null,
+              reviewSpeed: null,
+              reviewAesthetics: null,
+              baseRating: null,
+              newcomerBoost: null,
+              rating: null,
+              completedOrders: 0,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              responseHistory: []
+            };
+
+            await saveExecutorToDb(profile);
+
+            if (telegramId) {
+              executors.set(telegramId, profile);
+            }
+
+            notifyManagersAboutExecutor(profile);
+
+            sendJson(res, 200, { ok: true, executor: profile });
+          } catch (error) {
+            console.error("POST /api/executors/register error:", error);
+            sendJson(res, 500, { error: "Failed to register executor" });
+          }
+        });
+
         return;
       }
 
