@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Briefcase,
@@ -14,54 +14,28 @@ import {
   CircleDot
 } from "lucide-react";
 
-const demoTasks = {
-  waiting: [
-    {
-      id: 12,
-      title: "Баннеры для Telegram-кампании",
-      type: ["Статика"],
-      deadline: "16 марта, 18:00",
-      price: "6 000 ₽",
-      manager: "@YYT1M"
-    },
-    {
-      id: 13,
-      title: "Пак сторис + motion-плашки",
-      type: ["Статика", "Моушен"],
-      deadline: "17 марта, 12:00",
-      price: "12 000 ₽",
-      manager: "@YYT1M"
-    }
-  ],
-  active: [
-    {
-      id: 9,
-      title: "Лендинг для спецпроекта",
-      type: ["Лендинги"],
-      deadline: "18 марта, 20:00",
-      price: "35 000 ₽",
-      manager: "@YYT1M"
-    },
-    {
-      id: 10,
-      title: "KV + ресайзы на digital",
-      type: ["Статика"],
-      deadline: "19 марта, 14:00",
-      price: "14 000 ₽",
-      manager: "@YYT1M"
-    }
-  ],
-  archived: [
-    {
-      id: 4,
-      title: "Motion-тизеры для запуска",
-      type: ["Моушен"],
-      deadline: "12 марта, 16:00",
-      price: "18 000 ₽",
-      manager: "@YYT1M"
-    }
-  ]
+type Task = {
+  id: number;
+  title: string;
+  type: string[];
+  deadline: string;
+  price: string;
+  manager: string;
+  status?: string;
+  assignedExecutorId?: number | null;
+  assignedExecutorName?: string | null;
+  assignedExecutorContact?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
 };
+
+type TasksResponse = {
+  waiting: Task[];
+  active: Task[];
+  archived: Task[];
+};
+
+const API_BASE = "https://PASTE_YOUR_BACKEND_RENDER_URL_HERE";
 
 const topTabs = [
   { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
@@ -95,7 +69,7 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
   );
 }
 
-function TaskCard({ task }: { task: (typeof demoTasks.waiting)[number] }) {
+function TaskCard({ task }: { task: Task }) {
   return (
     <motion.div
       layout
@@ -107,8 +81,12 @@ function TaskCard({ task }: { task: (typeof demoTasks.waiting)[number] }) {
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
-          <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">
+            Задача #{task.id}
+          </div>
+          <div className="text-base font-semibold leading-5 text-white">
+            {task.title}
+          </div>
         </div>
         <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">
           Открыть
@@ -116,7 +94,7 @@ function TaskCard({ task }: { task: (typeof demoTasks.waiting)[number] }) {
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
-        {task.type.map((item) => (
+        {(task.type || []).map((item) => (
           <span
             key={item}
             className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]"
@@ -128,16 +106,20 @@ function TaskCard({ task }: { task: (typeof demoTasks.waiting)[number] }) {
 
       <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
         <div className="rounded-2xl bg-black/20 p-3">
-          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
-          <div>{task.deadline}</div>
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+            Дедлайн
+          </div>
+          <div>{task.deadline || "—"}</div>
         </div>
         <div className="rounded-2xl bg-black/20 p-3">
-          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
-          <div>{task.price}</div>
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+            Стоимость
+          </div>
+          <div>{task.price || "—"}</div>
         </div>
       </div>
 
-      <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager}</div>
+      <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
     </motion.div>
   );
 }
@@ -149,7 +131,49 @@ export default function App() {
   const [activeTopTab, setActiveTopTab] = useState<"waiting" | "active" | "archived">("waiting");
   const [activeBottomTab, setActiveBottomTab] = useState("tasks");
 
-  const visibleTasks = useMemo(() => demoTasks[activeTopTab], [activeTopTab]);
+  const [tasksData, setTasksData] = useState<TasksResponse>({
+    waiting: [],
+    active: [],
+    archived: []
+  });
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [tasksError, setTasksError] = useState("");
+
+  const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+
+  const loadTasks = async () => {
+    try {
+      setIsLoadingTasks(true);
+      setTasksError("");
+
+      const response = await fetch(`${API_BASE}/api/tasks`, {
+        method: "GET"
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data: TasksResponse = await response.json();
+
+      setTasksData({
+        waiting: Array.isArray(data.waiting) ? data.waiting : [],
+        active: Array.isArray(data.active) ? data.active : [],
+        archived: Array.isArray(data.archived) ? data.archived : []
+      });
+    } catch (error) {
+      console.error("Failed to load tasks:", error);
+      setTasksError("Не удалось загрузить задачи с сервера");
+    } finally {
+      setIsLoadingTasks(false);
+    }
+  };
+
+  useEffect(() => {
+    if (screen === "managerApp") {
+      void loadTasks();
+    }
+  }, [screen]);
 
   const handleManagerLogin = () => {
     if (!password.trim()) {
@@ -213,8 +237,12 @@ export default function App() {
                 <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
                   <Lock className="h-5 w-5 text-white/70" />
                 </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вход менеджера</h2>
-                <p className="mt-2 text-sm text-white/45">Введи пароль, чтобы открыть менеджерский интерфейс</p>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
+                  Вход менеджера
+                </h2>
+                <p className="mt-2 text-sm text-white/45">
+                  Введи пароль, чтобы открыть менеджерский интерфейс
+                </p>
               </div>
 
               <div className="space-y-3">
@@ -225,7 +253,9 @@ export default function App() {
                   placeholder="Пароль"
                   className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
                 />
-                {passwordError ? <div className="px-1 text-sm text-rose-300">{passwordError}</div> : null}
+                {passwordError ? (
+                  <div className="px-1 text-sm text-rose-300">{passwordError}</div>
+                ) : null}
                 <button
                   onClick={handleManagerLogin}
                   className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]"
@@ -248,10 +278,17 @@ export default function App() {
               <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">Задачи</div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">
+                      Креативный конвейер ЛЭНД
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">
+                      Задачи
+                    </div>
                   </div>
-                  <button className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70">
+                  <button
+                    onClick={() => void loadTasks()}
+                    className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"
+                  >
                     <Search className="h-5 w-5" />
                   </button>
                 </div>
@@ -260,6 +297,7 @@ export default function App() {
                   {topTabs.map((tab) => {
                     const Icon = tab.icon;
                     const active = activeTopTab === tab.key;
+
                     return (
                       <button
                         key={tab.key}
@@ -288,13 +326,35 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-3">
-                      <AnimatePresence mode="popLayout">
-                        {visibleTasks.map((task) => (
-                          <TaskCard key={task.id} task={task} />
-                        ))}
-                      </AnimatePresence>
-                    </div>
+                    {isLoadingTasks ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                        Загружаю задачи...
+                      </div>
+                    ) : tasksError ? (
+                      <div className="space-y-3">
+                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                          {tasksError}
+                        </div>
+                        <button
+                          onClick={() => void loadTasks()}
+                          className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                        >
+                          Повторить загрузку
+                        </button>
+                      </div>
+                    ) : visibleTasks.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                        Здесь пока нет задач.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <AnimatePresence mode="popLayout">
+                          {visibleTasks.map((task) => (
+                            <TaskCard key={task.id} task={task} />
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">
@@ -308,6 +368,7 @@ export default function App() {
                   {bottomTabs.map((tab) => {
                     const Icon = tab.icon;
                     const active = activeBottomTab === tab.key;
+
                     return (
                       <button
                         key={tab.key}
