@@ -124,6 +124,7 @@ async function initDb() {
       payment_method TEXT,
       payment_details JSONB,
       payment_file JSONB,
+      contract_data JSONB,
       unavailable_days JSONB NOT NULL DEFAULT '[]'::jsonb,
       unavailable_time TEXT,
       status TEXT,
@@ -149,6 +150,11 @@ async function initDb() {
   await runQuery(`
     ALTER TABLE executors
     ADD COLUMN IF NOT EXISTS completed_orders INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await runQuery(`
+    ALTER TABLE executors
+    ADD COLUMN IF NOT EXISTS contract_data JSONB
   `);
 
   await runQuery(`
@@ -302,6 +308,7 @@ async function loadExecutorsFromDb() {
       paymentMethod: row.payment_method,
       paymentDetails: row.payment_details,
       paymentFile: row.payment_file,
+      contractData: row.contract_data,
       unavailableDays: row.unavailable_days || [],
       unavailableTime: row.unavailable_time || "",
       status: row.status,
@@ -429,6 +436,7 @@ async function saveExecutorToDb(profile) {
       payment_method,
       payment_details,
       payment_file,
+      contract_data,
       unavailable_days,
       unavailable_time,
       status,
@@ -447,8 +455,8 @@ async function saveExecutorToDb(profile) {
     )
     VALUES (
       $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb,
-      $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-      $24::jsonb, $25, NOW()
+      $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+      $25::jsonb, $26, NOW()
     )
     ON CONFLICT (telegram_id)
     DO UPDATE SET
@@ -462,6 +470,7 @@ async function saveExecutorToDb(profile) {
       payment_method = EXCLUDED.payment_method,
       payment_details = EXCLUDED.payment_details,
       payment_file = EXCLUDED.payment_file,
+      contract_data = EXCLUDED.contract_data,
       unavailable_days = EXCLUDED.unavailable_days,
       unavailable_time = EXCLUDED.unavailable_time,
       status = EXCLUDED.status,
@@ -488,6 +497,7 @@ async function saveExecutorToDb(profile) {
     profile.paymentMethod || null,
     profile.paymentDetails ? JSON.stringify(profile.paymentDetails) : null,
     profile.paymentFile ? JSON.stringify(profile.paymentFile) : null,
+    profile.contractData ? JSON.stringify(profile.contractData) : null,
     JSON.stringify(profile.unavailableDays || []),
     profile.unavailableTime || "",
     profile.status || null,
@@ -1007,6 +1017,7 @@ function formatExecutorProfile(profile) {
     `Портфолио: ${profile.portfolio || "—"}`,
     `Способ выплаты: ${profile.paymentMethod || "—"}`,
     `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
+    `Договор: ${formatField(profile.contractData, "Договор")}`,
     `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
     `Недоступное время: ${profile.unavailableTime || "—"}`,
     `Статус: ${profile.status || "—"}`,
@@ -1071,6 +1082,7 @@ function serializeExecutorProfile(profile) {
     portfolio: profile.portfolio || null,
     paymentMethod: profile.paymentMethod || null,
     paymentDetails: profile.paymentDetails || null,
+    contractData: profile.contractData || null,
     unavailableDays: profile.unavailableDays || [],
     unavailableTime: profile.unavailableTime || "",
     status: profile.status || null,
@@ -1559,6 +1571,7 @@ function startExecutorRegistration(chatId, from, existing = null) {
       paymentMethod: existing?.paymentMethod || "",
       paymentDetails: existing?.paymentDetails || null,
       paymentFile: existing?.paymentFile || null,
+      contractData: existing?.contractData || null,
       unavailableDays: existing?.unavailableDays || [],
       unavailableTime: existing?.unavailableTime || "",
       status: existing?.status || "На модерации",
@@ -1592,6 +1605,7 @@ function notifyManagersAboutExecutor(profile) {
     `Портфолио: ${profile.portfolio || "—"}`,
     `Способ выплаты: ${profile.paymentMethod || "—"}`,
     `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
+    `Договор: ${formatField(profile.contractData, "Договор")}`,
     `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
     `Недоступное время: ${profile.unavailableTime || "—"}`,
     `Статус: ${profile.status || "—"}`
@@ -3130,6 +3144,92 @@ async function bootstrap() {
           } catch (error) {
             console.error("POST /api/executors/register error:", error);
             sendJson(res, 500, { error: "Failed to register executor" });
+          }
+        });
+
+        return;
+      }
+
+
+      if (req.method === "POST" && req.url === "/api/executors/manager-update") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+            const profile = executors.get(telegramId);
+
+            if (!telegramId || !profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            const fullName = String(payload.fullName || "").trim();
+            const telegramContact = String(payload.telegramContact || "").trim();
+            const specializations = Array.isArray(payload.specializations)
+              ? payload.specializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const verifiedSpecializations = Array.isArray(payload.verifiedSpecializations)
+              ? payload.verifiedSpecializations.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            const reviewAccuracy = Number(payload.reviewAccuracy);
+            const reviewSpeed = Number(payload.reviewSpeed);
+            const reviewAesthetics = Number(payload.reviewAesthetics);
+
+            if (!fullName || !telegramContact) {
+              sendJson(res, 400, { error: "fullName and telegramContact are required" });
+              return;
+            }
+
+            if (!specializations.length || !verifiedSpecializations.length) {
+              sendJson(res, 400, { error: "specializations are required" });
+              return;
+            }
+
+            if (![reviewAccuracy, reviewSpeed, reviewAesthetics].every(v => Number.isInteger(v) && v >= 1 && v <= 5)) {
+              sendJson(res, 400, { error: "Invalid review scores" });
+              return;
+            }
+
+            profile.fullName = fullName;
+            profile.telegramContact = telegramContact;
+            profile.specializations = specializations;
+            profile.verifiedSpecializations = verifiedSpecializations;
+            profile.portfolio = payload.portfolio ? String(payload.portfolio).trim() : null;
+            profile.paymentMethod = payload.paymentMethod ? String(payload.paymentMethod).trim() : null;
+            profile.paymentDetails = payload.paymentDetails
+              ? { type: "text", value: String(payload.paymentDetails).trim() }
+              : null;
+            profile.contractData = payload.contractData
+              ? { type: "text", value: String(payload.contractData).trim() }
+              : null;
+            profile.unavailableDays = Array.isArray(payload.unavailableDays)
+              ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
+              : [];
+            profile.unavailableTime = payload.unavailableTime ? String(payload.unavailableTime).trim() : "";
+            profile.reviewAccuracy = reviewAccuracy;
+            profile.reviewSpeed = reviewSpeed;
+            profile.reviewAesthetics = reviewAesthetics;
+            profile.baseRating = calculateBaseRating(reviewAccuracy, reviewSpeed, reviewAesthetics);
+            profile.newcomerBoost = profile.completedOrders < 2 ? 0 : 0;
+            profile.rating = profile.baseRating;
+            if (payload.managerContact) {
+              profile.approvedBy = String(payload.managerContact).trim();
+            }
+            profile.updatedAt = new Date().toISOString();
+
+            await saveExecutorToDb(profile);
+            executors.set(profile.telegramId, profile);
+
+            sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
+          } catch (error) {
+            console.error("POST /api/executors/manager-update error:", error);
+            sendJson(res, 500, { error: "Failed to update executor" });
           }
         });
 
