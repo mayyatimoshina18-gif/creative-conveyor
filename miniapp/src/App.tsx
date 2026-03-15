@@ -11,7 +11,8 @@ import {
   Search,
   Clock3,
   Archive,
-  CircleDot
+  CircleDot,
+  Pencil
 } from "lucide-react";
 
 type Task = {
@@ -36,8 +37,8 @@ type TasksResponse = {
 };
 
 type ExecutorProfile = {
-  telegramId?: number;
-  executorCode?: string;
+  telegramId?: number | null;
+  executorCode?: string | null;
   username?: string | null;
   telegramContact?: string | null;
   fullName?: string | null;
@@ -45,6 +46,7 @@ type ExecutorProfile = {
   verifiedSpecializations?: string[];
   portfolio?: string | null;
   paymentMethod?: string | null;
+  paymentDetails?: { type?: string; value?: string } | string | null;
   unavailableDays?: string[];
   unavailableTime?: string | null;
   status?: string | null;
@@ -112,14 +114,10 @@ function TaskCard({ task }: { task: Task }) {
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">
-            Задача #{task.id}
-          </div>
+          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
           <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
         </div>
-        <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">
-          Открыть
-        </button>
+        <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">Открыть</button>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
@@ -135,15 +133,11 @@ function TaskCard({ task }: { task: Task }) {
 
       <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
         <div className="rounded-2xl bg-black/20 p-3">
-          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-            Дедлайн
-          </div>
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
           <div>{task.deadline || "—"}</div>
         </div>
         <div className="rounded-2xl bg-black/20 p-3">
-          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-            Стоимость
-          </div>
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
           <div>{task.price || "—"}</div>
         </div>
       </div>
@@ -169,6 +163,44 @@ function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) 
       className="min-h-[110px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
     />
   );
+}
+
+function getPaymentDetailsText(value: ExecutorProfile["paymentDetails"]) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value.value || "";
+}
+
+function getPaymentPrompt(paymentMethod: string) {
+  if (paymentMethod === "Переводом") {
+    return {
+      label: "Реквизиты для выплаты",
+      placeholder: "Номер телефона или номер карты",
+      helper: "Укажи номер телефона или карты для перевода."
+    };
+  }
+
+  if (paymentMethod === "ИП") {
+    return {
+      label: "Данные ИП",
+      placeholder: "ИНН ИП и ФИО",
+      helper: "Укажи ИНН ИП и ФИО."
+    };
+  }
+
+  if (paymentMethod === "Самозанятость") {
+    return {
+      label: "Данные самозанятости",
+      placeholder: "ИНН и ФИО",
+      helper: "Укажи ИНН и ФИО."
+    };
+  }
+
+  return {
+    label: "Реквизиты",
+    placeholder: "Реквизиты для выплаты",
+    helper: ""
+  };
 }
 
 export default function App() {
@@ -199,6 +231,7 @@ export default function App() {
   const [executorUnavailableTime, setExecutorUnavailableTime] = useState("");
   const [executorFormError, setExecutorFormError] = useState("");
   const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
+  const [isExecutorEditing, setIsExecutorEditing] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -239,6 +272,19 @@ export default function App() {
   }, []);
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+  const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
+
+  const fillExecutorFormFromProfile = (profile: ExecutorProfile | null) => {
+    if (!profile) return;
+    setExecutorFullName(profile.fullName || "");
+    setExecutorContact(profile.telegramContact || "");
+    setExecutorSpecializations(profile.specializations || []);
+    setExecutorPortfolio(profile.portfolio || "");
+    setExecutorPaymentMethod(profile.paymentMethod || "");
+    setExecutorPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
+    setExecutorUnavailableDays(profile.unavailableDays || []);
+    setExecutorUnavailableTime(profile.unavailableTime || "");
+  };
 
   const loadTasks = async () => {
     try {
@@ -284,6 +330,7 @@ export default function App() {
     setExecutorPaymentDetails("");
     setExecutorUnavailableDays([]);
     setExecutorUnavailableTime("");
+    setIsExecutorEditing(false);
 
     const telegram = (window as any)?.Telegram?.WebApp;
     const username = telegram?.initDataUnsafe?.user?.username;
@@ -328,6 +375,7 @@ export default function App() {
       }
 
       setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
 
       if (data.executor.status === "На модерации") {
         setScreen("executorPending");
@@ -473,13 +521,19 @@ export default function App() {
     try {
       setExecutorError("");
 
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const user = telegram?.initDataUnsafe?.user;
+
       const response = await fetch(`${API_BASE}/api/executors/login-by-code`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          executorCode: executorCode.trim()
+          executorCode: executorCode.trim(),
+          telegramId: user?.id || null,
+          username: user?.username || null,
+          telegramContact: user?.username ? `@${user.username}` : null
         })
       });
 
@@ -491,6 +545,7 @@ export default function App() {
       }
 
       setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
       setExecutorInfo("Аккаунт найден");
 
       if (data.executor.status === "На модерации") {
@@ -510,35 +565,41 @@ export default function App() {
     }
   };
 
-  const handleExecutorRegister = async () => {
+  const validateExecutorForm = () => {
     if (!executorFullName.trim()) {
       setExecutorFormError("Введи имя и фамилию");
-      return;
+      return false;
     }
 
     if (!executorContact.trim()) {
       setExecutorFormError("Введи контакт для связи");
-      return;
+      return false;
     }
 
     if (!executorSpecializations.length) {
       setExecutorFormError("Выбери хотя бы одну специализацию");
-      return;
+      return false;
     }
 
     if (!executorPaymentMethod.trim()) {
       setExecutorFormError("Укажи способ выплаты");
-      return;
+      return false;
     }
 
     if (!executorPaymentDetails.trim()) {
-      setExecutorFormError("Укажи реквизиты");
-      return;
+      setExecutorFormError("Заполни данные для выплаты");
+      return false;
     }
+
+    setExecutorFormError("");
+    return true;
+  };
+
+  const handleExecutorRegister = async () => {
+    if (!validateExecutorForm()) return;
 
     try {
       setIsExecutorSubmitting(true);
-      setExecutorFormError("");
 
       const telegram = (window as any)?.Telegram?.WebApp;
       const user = telegram?.initDataUnsafe?.user;
@@ -569,6 +630,7 @@ export default function App() {
       }
 
       setExecutor(data.executor || null);
+      fillExecutorFormFromProfile(data.executor || null);
       setScreen("executorPending");
     } catch (error) {
       console.error("Executor registration failed:", error);
@@ -578,496 +640,334 @@ export default function App() {
     }
   };
 
+  const handleExecutorUpdate = async () => {
+    if (!executor || !validateExecutorForm()) return;
+
+    try {
+      setIsExecutorSubmitting(true);
+      setExecutorInfo("");
+      setExecutorError("");
+
+      const response = await fetch(`${API_BASE}/api/executors/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: executor.telegramId,
+          fullName: executorFullName.trim(),
+          telegramContact: executorContact.trim(),
+          specializations: executorSpecializations,
+          portfolio: executorPortfolio.trim() || null,
+          paymentMethod: executorPaymentMethod.trim(),
+          paymentDetails: executorPaymentDetails.trim(),
+          unavailableDays: executorUnavailableDays,
+          unavailableTime: executorUnavailableTime.trim() || ""
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.executor) {
+        throw new Error(data?.error || "Update failed");
+      }
+
+      setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
+      setIsExecutorEditing(false);
+      setExecutorInfo("Анкета обновлена");
+    } catch (error) {
+      console.error("Executor update failed:", error);
+      setExecutorFormError("Не удалось обновить анкету");
+    } finally {
+      setIsExecutorSubmitting(false);
+    }
+  };
+
+  const renderExecutorForm = (submitLabel: string, onSubmit: () => void, includeBack = true) => (
+    <>
+      {includeBack ? (
+        <button
+          onClick={() => setScreen("executorRegister")}
+          className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
+        >
+          Назад
+        </button>
+      ) : null}
+
+      <div className="mb-6">
+        <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Анкета исполнителя</h2>
+        <p className="mt-3 text-sm text-white/45">Заполни анкету, чтобы менеджер мог проверить тебя и допустить к задачам.</p>
+      </div>
+
+      <div className="space-y-3">
+        <FormInput value={executorFullName} onChange={(e) => setExecutorFullName(e.target.value)} placeholder="Имя и фамилия" />
+
+        <FormInput value={executorContact} onChange={(e) => setExecutorContact(e.target.value)} placeholder="Контакт для связи" />
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Специализации</div>
+          <div className="flex flex-wrap gap-2">
+            {SPECIALIZATION_OPTIONS.map((item) => {
+              const active = executorSpecializations.includes(item);
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => toggleExecutorSpecialization(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <FormInput
+          value={executorPortfolio}
+          onChange={(e) => setExecutorPortfolio(e.target.value)}
+          placeholder="Ссылка на портфолио (необязательно)"
+        />
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
+          <div className="flex flex-wrap gap-2">
+            {PAYMENT_OPTIONS.map((item) => {
+              const active = executorPaymentMethod === item;
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => setExecutorPaymentMethod(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-2 text-sm text-white/55">{paymentPrompt.label}</div>
+          {paymentPrompt.helper ? <div className="mb-3 text-xs text-white/35">{paymentPrompt.helper}</div> : null}
+          <FormTextarea
+            value={executorPaymentDetails}
+            onChange={(e) => setExecutorPaymentDetails(e.target.value)}
+            placeholder={paymentPrompt.placeholder}
+          />
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Недоступные дни (необязательно)</div>
+          <div className="flex flex-wrap gap-2">
+            {DAY_OPTIONS.map((item) => {
+              const active = executorUnavailableDays.includes(item);
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => toggleExecutorDay(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <FormInput
+          value={executorUnavailableTime}
+          onChange={(e) => setExecutorUnavailableTime(e.target.value)}
+          placeholder="Часы недоступности (необязательно)"
+        />
+
+        {executorFormError ? (
+          <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorFormError}</div>
+        ) : null}
+
+        {executorInfo ? (
+          <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div>
+        ) : null}
+
+        <button
+          onClick={onSubmit}
+          disabled={isExecutorSubmitting}
+          className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+        >
+          {isExecutorSubmitting ? "Сохраняю..." : submitLabel}
+        </button>
+      </div>
+    </>
+  );
+
   return (
-    <div
-      className="min-h-screen bg-[#09090B] text-white"
-      style={{ fontFamily: "Involve, Inter, system-ui, sans-serif" }}
-    >
+    <div className="min-h-screen bg-[#09090B] text-white" style={{ fontFamily: "Involve, Inter, system-ui, sans-serif" }}>
       <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-[radial-gradient(circle_at_top,rgba(86,255,239,0.14),transparent_34%),linear-gradient(180deg,#0b0b10_0%,#09090b_100%)]">
         <AnimatePresence mode="wait">
           {screen === "welcome" && (
-            <motion.div
-              key="welcome"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
+            <motion.div key="welcome" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
               <div className="mb-10 mt-auto">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  ЛЭНД
-                </div>
-                <h1 className="max-w-[320px] text-[34px] font-semibold leading-[1.02] tracking-[-0.04em] text-white">
-                  Привет! Это креативный конвейер ЛЭНД
-                </h1>
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">ЛЭНД</div>
+                <h1 className="max-w-[320px] text-[34px] font-semibold leading-[1.02] tracking-[-0.04em] text-white">Привет! Это креативный конвейер ЛЭНД</h1>
                 <p className="mt-4 text-base text-white/45">Выбери роль</p>
               </div>
 
               <div className="mb-auto space-y-3">
                 <RoleButton label="Я менеджер" onClick={() => setScreen("managerPassword")} />
-                <RoleButton
-                  label="Я исполнитель"
-                  onClick={() => {
-                    setScreen("executorLoading");
-                    void loadExecutor();
-                  }}
-                />
+                <RoleButton label="Я исполнитель" onClick={() => { setScreen("executorLoading"); void loadExecutor(); }} />
               </div>
             </motion.div>
           )}
 
           {screen === "executorLoading" && (
-            <motion.div
-              key="executorLoading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex min-h-screen flex-col items-center justify-center px-6 text-center"
-            >
+            <motion.div key="executorLoading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
               <div className="mb-4 h-16 w-16 rounded-full bg-[#56FFEF]/15 blur-[2px]" />
               <div className="text-base text-white/75">Проверяем ваш аккаунт исполнителя…</div>
             </motion.div>
           )}
 
           {screen === "executorRegister" && (
-            <motion.div
-              key="executorRegister"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
+            <motion.div key="executorRegister" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
 
               <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вы ещё не зарегистрированы
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Заполни анкету исполнителя или войди по ID, если ты уже был зарегистрирован раньше.
-                </p>
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вы ещё не зарегистрированы</h2>
+                <p className="mt-3 text-sm text-white/45">Заполни анкету исполнителя или войди по ID, если ты уже был зарегистрирован раньше.</p>
               </div>
 
               <div className="space-y-3">
-                <button
-                  onClick={() => {
-                    resetExecutorForm();
-                    setScreen("executorForm");
-                  }}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95"
-                >
-                  Заполнить анкету
-                </button>
-
-                <button
-                  onClick={() => {
-                    setExecutorError("");
-                    setExecutorInfo("");
-                    setExecutorCode("");
-                    setScreen("executorCodeLogin");
-                  }}
-                  className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10"
-                >
-                  У меня уже есть ID исполнителя
-                </button>
+                <button onClick={() => { resetExecutorForm(); setScreen("executorForm"); }} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Заполнить анкету</button>
+                <button onClick={() => { setExecutorError(""); setExecutorInfo(""); setExecutorCode(""); setScreen("executorCodeLogin"); }} className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10">У меня уже есть ID исполнителя</button>
               </div>
             </motion.div>
           )}
 
           {screen === "executorForm" && (
-            <motion.div
-              key="executorForm"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("executorRegister")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-6">
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Анкета исполнителя
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Заполни анкету, чтобы менеджер мог проверить тебя и допустить к задачам.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <FormInput
-                  value={executorFullName}
-                  onChange={(e) => setExecutorFullName(e.target.value)}
-                  placeholder="Имя и фамилия"
-                />
-
-                <FormInput
-                  value={executorContact}
-                  onChange={(e) => setExecutorContact(e.target.value)}
-                  placeholder="Контакт для связи"
-                />
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-3 text-sm text-white/55">Специализации</div>
-                  <div className="flex flex-wrap gap-2">
-                    {SPECIALIZATION_OPTIONS.map((item) => {
-                      const active = executorSpecializations.includes(item);
-
-                      return (
-                        <button
-                          type="button"
-                          key={item}
-                          onClick={() => toggleExecutorSpecialization(item)}
-                          className={cn(
-                            "rounded-full border px-3 py-2 text-sm transition",
-                            active
-                              ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
-                              : "border-white/10 bg-white/5 text-white/65"
-                          )}
-                        >
-                          {item}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <FormInput
-                  value={executorPortfolio}
-                  onChange={(e) => setExecutorPortfolio(e.target.value)}
-                  placeholder="Ссылка на портфолио (необязательно)"
-                />
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
-                  <div className="flex flex-wrap gap-2">
-                    {PAYMENT_OPTIONS.map((item) => {
-                      const active = executorPaymentMethod === item;
-
-                      return (
-                        <button
-                          type="button"
-                          key={item}
-                          onClick={() => setExecutorPaymentMethod(item)}
-                          className={cn(
-                            "rounded-full border px-3 py-2 text-sm transition",
-                            active
-                              ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
-                              : "border-white/10 bg-white/5 text-white/65"
-                          )}
-                        >
-                          {item}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <FormTextarea
-                  value={executorPaymentDetails}
-                  onChange={(e) => setExecutorPaymentDetails(e.target.value)}
-                  placeholder="Реквизиты для выплаты"
-                />
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-3 text-sm text-white/55">Недоступные дни (необязательно)</div>
-                  <div className="flex flex-wrap gap-2">
-                    {DAY_OPTIONS.map((item) => {
-                      const active = executorUnavailableDays.includes(item);
-
-                      return (
-                        <button
-                          type="button"
-                          key={item}
-                          onClick={() => toggleExecutorDay(item)}
-                          className={cn(
-                            "rounded-full border px-3 py-2 text-sm transition",
-                            active
-                              ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
-                              : "border-white/10 bg-white/5 text-white/65"
-                          )}
-                        >
-                          {item}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <FormInput
-                  value={executorUnavailableTime}
-                  onChange={(e) => setExecutorUnavailableTime(e.target.value)}
-                  placeholder="Часы недоступности (необязательно)"
-                />
-
-                {executorFormError ? (
-                  <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                    {executorFormError}
-                  </div>
-                ) : null}
-
-                <button
-                  onClick={() => void handleExecutorRegister()}
-                  disabled={isExecutorSubmitting}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
-                >
-                  {isExecutorSubmitting ? "Отправляю..." : "Отправить анкету"}
-                </button>
-              </div>
+            <motion.div key="executorForm" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              {renderExecutorForm("Отправить анкету", handleExecutorRegister, true)}
             </motion.div>
           )}
 
           {screen === "executorCodeLogin" && (
-            <motion.div
-              key="executorCodeLogin"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("executorRegister")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
+            <motion.div key="executorCodeLogin" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("executorRegister")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
               <div className="mb-8">
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вход по ID исполнителя
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Введи резервный ID, который был присвоен тебе при регистрации.
-                </p>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вход по ID исполнителя</h2>
+                <p className="mt-3 text-sm text-white/45">Введи резервный ID, который был присвоен тебе при регистрации.</p>
               </div>
-
               <div className="space-y-3">
-                <FormInput
-                  value={executorCode}
-                  onChange={(e) => setExecutorCode(e.target.value.toUpperCase())}
-                  placeholder="Например: EX-7K3D9A"
-                />
-
-                {executorError ? (
-                  <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                    {executorError}
-                  </div>
-                ) : null}
-
-                <button
-                  onClick={() => void handleExecutorCodeLogin()}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95"
-                >
-                  Войти
-                </button>
+                <FormInput value={executorCode} onChange={(e) => setExecutorCode(e.target.value.toUpperCase())} placeholder="Например: EX-7K3D9A" />
+                {executorError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorError}</div> : null}
+                <button onClick={() => void handleExecutorCodeLogin()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Войти</button>
               </div>
             </motion.div>
           )}
 
           {screen === "executorPending" && (
-            <motion.div
-              key="executorPending"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
+            <motion.div key="executorPending" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
               <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Анкета на модерации
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Менеджер проверяет твою анкету. После подтверждения ты получишь доступ к задачам.
-                </p>
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Анкета на модерации</h2>
+                <p className="mt-3 text-sm text-white/45">Менеджер проверяет твою анкету. После подтверждения ты получишь доступ к задачам.</p>
               </div>
-
-              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
-                <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">
-                  ID исполнителя
-                </div>
-                <div className="text-base text-white">{executor?.executorCode || "—"}</div>
+              <div className="space-y-3">
+                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-base text-white">{executor?.executorCode || "—"}</div></div>
+                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-base text-white">{executor?.telegramContact || "—"}</div></div>
               </div>
             </motion.div>
           )}
 
           {screen === "executorApp" && (
-            <motion.div
-              key="executorApp"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
+            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => { setIsExecutorEditing(false); setExecutorInfo(""); setScreen("welcome"); }} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
 
-              <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Кабинет исполнителя
-                </h2>
-              </div>
+              {!isExecutorEditing ? (
+                <>
+                  <div className="mb-8 flex items-start justify-between gap-4">
+                    <div>
+                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Кабинет исполнителя</h2>
+                    </div>
+                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(true); }} className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"><Pencil className="h-4 w-4" />Редактировать</button>
+                  </div>
 
-              <div className="space-y-3">
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    ID исполнителя
+                  <div className="space-y-3">
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
+                    {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
                   </div>
-                  <div className="text-white">{executor?.executorCode || "—"}</div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    Контакт
+                </>
+              ) : (
+                <>
+                  <div className="mb-8 flex items-start justify-between gap-4">
+                    <div>
+                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Редактирование анкеты</h2>
+                    </div>
+                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Отмена</button>
                   </div>
-                  <div className="text-white">{executor?.telegramContact || "—"}</div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    Статус
-                  </div>
-                  <div className="text-white">{executor?.status || "—"}</div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    Специализации
-                  </div>
-                  <div className="text-white">
-                    {executor?.specializations?.length
-                      ? executor.specializations.join(", ")
-                      : "—"}
-                  </div>
-                </div>
-              </div>
+                  {renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)}
+                </>
+              )}
             </motion.div>
           )}
 
           {screen === "managerPassword" && (
-            <motion.div
-              key="managerPassword"
-              initial={{ opacity: 0, x: 18 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
+            <motion.div key="managerPassword" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
               <div className="mb-8">
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                  <Lock className="h-5 w-5 text-white/70" />
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вход менеджера
-                </h2>
-                <p className="mt-2 text-sm text-white/45">
-                  Введи пароль, чтобы открыть менеджерский интерфейс
-                </p>
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5"><Lock className="h-5 w-5 text-white/70" /></div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вход менеджера</h2>
+                <p className="mt-2 text-sm text-white/45">Введи пароль, чтобы открыть менеджерский интерфейс</p>
               </div>
-
               <div className="space-y-3">
-                <FormInput
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Пароль"
-                />
-                {passwordError ? (
-                  <div className="px-1 text-sm text-rose-300">{passwordError}</div>
-                ) : null}
-                <button
-                  onClick={handleManagerLogin}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]"
-                >
-                  Войти
-                </button>
+                <FormInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль" />
+                {passwordError ? <div className="px-1 text-sm text-rose-300">{passwordError}</div> : null}
+                <button onClick={handleManagerLogin} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]">Войти</button>
               </div>
             </motion.div>
           )}
 
           {screen === "managerApp" && (
-            <motion.div
-              key="managerApp"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col"
-            >
+            <motion.div key="managerApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col">
               <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">
-                      Креативный конвейер ЛЭНД
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">
-                      {activeBottomTab === "create" ? "Создать задачу" : "Задачи"}
-                    </div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : "Задачи"}</div>
                   </div>
-                  <button
-                    onClick={() => void loadTasks()}
-                    className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"
-                  >
-                    <Search className="h-5 w-5" />
-                  </button>
+                  <button onClick={() => void loadTasks()} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
-
                 {activeBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
                     {topTabs.map((tab) => {
                       const Icon = tab.icon;
                       const active = activeTopTab === tab.key;
-
                       return (
-                        <button
-                          key={tab.key}
-                          onClick={() => setActiveTopTab(tab.key)}
-                          className={cn(
-                            "rounded-[18px] px-3 py-3 text-left transition",
-                            active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                          )}
-                        >
+                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
                           <Icon className="mb-2 h-4 w-4" />
                           <div className="text-[12px] font-medium leading-4">{tab.label}</div>
                         </button>
@@ -1076,180 +976,41 @@ export default function App() {
                   </div>
                 )}
               </div>
-
               <div className="flex-1 px-5 pb-28 pt-4">
                 {activeBottomTab === "tasks" ? (
                   <>
-                    <div className="mb-4 flex items-center justify-between">
-                      <div className="text-sm text-white/45">
-                        {activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}
-                        {activeTopTab === "active" && "Задачи, которые сейчас в работе"}
-                        {activeTopTab === "archived" && "Завершённые и архивные задачи"}
-                      </div>
-                    </div>
-
+                    <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
                     {isLoadingTasks ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
-                        Загружаю задачи...
-                      </div>
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : tasksError ? (
-                      <div className="space-y-3">
-                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                          {tasksError}
-                        </div>
-                        <button
-                          onClick={() => void loadTasks()}
-                          className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-                        >
-                          Повторить загрузку
-                        </button>
-                      </div>
+                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => void loadTasks()} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
                     ) : visibleTasks.length === 0 ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
-                        Здесь пока нет задач.
-                      </div>
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
-                      <div className="space-y-3">
-                        <AnimatePresence mode="popLayout">
-                          {visibleTasks.map((task) => (
-                            <TaskCard key={task.id} task={task} />
-                          ))}
-                        </AnimatePresence>
-                      </div>
+                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)}</AnimatePresence></div>
                     )}
                   </>
                 ) : activeBottomTab === "create" ? (
                   <div className="space-y-3">
-                    <FormInput
-                      value={createTitle}
-                      onChange={(e) => setCreateTitle(e.target.value)}
-                      placeholder="Название задачи"
-                    />
-
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                      <div className="mb-3 text-sm text-white/55">Категории</div>
-                      <div className="flex flex-wrap gap-2">
-                        {SPECIALIZATION_OPTIONS.map((item) => {
-                          const active = createCategories.includes(item);
-
-                          return (
-                            <button
-                              type="button"
-                              key={item}
-                              onClick={() => toggleCategory(item)}
-                              className={cn(
-                                "rounded-full border px-3 py-2 text-sm transition",
-                                active
-                                  ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
-                                  : "border-white/10 bg-white/5 text-white/65"
-                              )}
-                            >
-                              {item}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <FormInput
-                      type="date"
-                      value={createDeadlineDate}
-                      onChange={(e) => setCreateDeadlineDate(e.target.value)}
-                      placeholder="Дата дедлайна"
-                    />
-
-                    <FormInput
-                      type="time"
-                      value={createDeadlineTime}
-                      onChange={(e) => setCreateDeadlineTime(e.target.value)}
-                      placeholder="Время дедлайна"
-                    />
-
-                    <FormInput
-                      value={createPrice}
-                      onChange={(e) => setCreatePrice(e.target.value)}
-                      placeholder="Стоимость"
-                    />
-
-                    <FormInput
-                      value={createManagerContact}
-                      onChange={(e) => setCreateManagerContact(e.target.value)}
-                      placeholder="Контакт менеджера"
-                    />
-
-                    <FormInput
-                      value={createSources}
-                      onChange={(e) => setCreateSources(e.target.value)}
-                      placeholder="Источники (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createRefs}
-                      onChange={(e) => setCreateRefs(e.target.value)}
-                      placeholder="Референсы (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createDeliveryTarget}
-                      onChange={(e) => setCreateDeliveryTarget(e.target.value)}
-                      placeholder="Куда отгружать результат (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createComment}
-                      onChange={(e) => setCreateComment(e.target.value)}
-                      placeholder="Комментарий (необязательно)"
-                    />
-
-                    {createError ? (
-                      <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                        {createError}
-                      </div>
-                    ) : null}
-
-                    {createSuccess ? (
-                      <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
-                        {createSuccess}
-                      </div>
-                    ) : null}
-
-                    <button
-                      onClick={handleCreateTask}
-                      disabled={isCreating}
-                      className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
-                    >
-                      {isCreating ? "Создаю..." : "Создать задачу"}
-                    </button>
+                    <FormInput value={createTitle} onChange={(e) => setCreateTitle(e.target.value)} placeholder="Название задачи" />
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-3 text-sm text-white/55">Категории</div><div className="flex flex-wrap gap-2">{SPECIALIZATION_OPTIONS.map((item) => { const active = createCategories.includes(item); return <button type="button" key={item} onClick={() => toggleCategory(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>{item}</button>; })}</div></div>
+                    <FormInput type="date" value={createDeadlineDate} onChange={(e) => setCreateDeadlineDate(e.target.value)} placeholder="Дата дедлайна" />
+                    <FormInput type="time" value={createDeadlineTime} onChange={(e) => setCreateDeadlineTime(e.target.value)} placeholder="Время дедлайна" />
+                    <FormInput value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} placeholder="Стоимость" />
+                    <FormInput value={createManagerContact} onChange={(e) => setCreateManagerContact(e.target.value)} placeholder="Контакт менеджера" />
+                    <FormInput value={createSources} onChange={(e) => setCreateSources(e.target.value)} placeholder="Источники (необязательно)" />
+                    <FormInput value={createRefs} onChange={(e) => setCreateRefs(e.target.value)} placeholder="Референсы (необязательно)" />
+                    <FormInput value={createDeliveryTarget} onChange={(e) => setCreateDeliveryTarget(e.target.value)} placeholder="Куда отгружать результат (необязательно)" />
+                    <FormInput value={createComment} onChange={(e) => setCreateComment(e.target.value)} placeholder="Комментарий (необязательно)" />
+                    {createError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{createError}</div> : null}
+                    {createSuccess ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{createSuccess}</div> : null}
+                    <button onClick={handleCreateTask} disabled={isCreating} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">{isCreating ? "Создаю..." : "Создать задачу"}</button>
                   </div>
                 ) : (
-                  <div className="flex h-full items-center justify-center px-6 text-center text-white/40">
-                    Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.
-                  </div>
+                  <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
                 )}
               </div>
-
-              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
-                <div className="grid grid-cols-5 gap-1">
-                  {bottomTabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const active = activeBottomTab === tab.key;
-
-                    return (
-                      <button
-                        key={tab.key}
-                        onClick={() => setActiveBottomTab(tab.key)}
-                        className={cn(
-                          "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition",
-                          active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]"
-                        )}
-                      >
-                        <Icon className="h-5 w-5" />
-                        <span className="text-[10px] leading-none">{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
             </motion.div>
           )}
         </AnimatePresence>
