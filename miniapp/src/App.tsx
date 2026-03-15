@@ -261,6 +261,24 @@ export default function App() {
   const [moderationMessage, setModerationMessage] = useState("");
   const [isModeratingExecutor, setIsModeratingExecutor] = useState(false);
 
+  const [isManagerEditingRegistryExecutor, setIsManagerEditingRegistryExecutor] = useState(false);
+  const [editingRegistryTelegramId, setEditingRegistryTelegramId] = useState<number | null>(null);
+  const [managerExecutorMessage, setManagerExecutorMessage] = useState("");
+  const [isSavingManagerExecutor, setIsSavingManagerExecutor] = useState(false);
+  const [managerEditFullName, setManagerEditFullName] = useState("");
+  const [managerEditContact, setManagerEditContact] = useState("");
+  const [managerEditSpecializations, setManagerEditSpecializations] = useState<string[]>([]);
+  const [managerEditVerifiedSpecializations, setManagerEditVerifiedSpecializations] = useState<string[]>([]);
+  const [managerEditPortfolio, setManagerEditPortfolio] = useState("");
+  const [managerEditPaymentMethod, setManagerEditPaymentMethod] = useState("");
+  const [managerEditPaymentDetails, setManagerEditPaymentDetails] = useState("");
+  const [managerEditUnavailableDays, setManagerEditUnavailableDays] = useState<string[]>([]);
+  const [managerEditUnavailableTime, setManagerEditUnavailableTime] = useState("");
+  const [managerEditReviewAccuracy, setManagerEditReviewAccuracy] = useState("5");
+  const [managerEditReviewSpeed, setManagerEditReviewSpeed] = useState("5");
+  const [managerEditReviewAesthetics, setManagerEditReviewAesthetics] = useState("5");
+  const [managerEditContractData, setManagerEditContractData] = useState("");
+
   const [createTitle, setCreateTitle] = useState("");
   const [createCategories, setCreateCategories] = useState<string[]>([]);
   const [createDeadlineDate, setCreateDeadlineDate] = useState("");
@@ -294,6 +312,11 @@ export default function App() {
     [pendingExecutors, selectedPendingTelegramId]
   );
 
+  const selectedApprovedExecutor = useMemo(
+    () => approvedExecutors.find((item) => Number(item.telegramId) === Number(editingRegistryTelegramId)) || null,
+    [approvedExecutors, editingRegistryTelegramId]
+  );
+
   const fillExecutorFormFromProfile = (profile: ExecutorProfile | null) => {
     if (!profile) return;
     setExecutorFullName(profile.fullName || "");
@@ -304,6 +327,41 @@ export default function App() {
     setExecutorPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
     setExecutorUnavailableDays(profile.unavailableDays || []);
     setExecutorUnavailableTime(profile.unavailableTime || "");
+  };
+
+  const fillManagerExecutorForm = (profile: ExecutorProfile | null) => {
+    if (!profile) return;
+    setManagerEditFullName(profile.fullName || "");
+    setManagerEditContact(profile.telegramContact || "");
+    setManagerEditSpecializations(profile.specializations || []);
+    setManagerEditVerifiedSpecializations(profile.verifiedSpecializations || profile.specializations || []);
+    setManagerEditPortfolio(profile.portfolio || "");
+    setManagerEditPaymentMethod(profile.paymentMethod || "");
+    setManagerEditPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
+    setManagerEditUnavailableDays(profile.unavailableDays || []);
+    setManagerEditUnavailableTime(profile.unavailableTime || "");
+    setManagerEditReviewAccuracy(String(profile.reviewAccuracy ?? 5));
+    setManagerEditReviewSpeed(String(profile.reviewSpeed ?? 5));
+    setManagerEditReviewAesthetics(String(profile.reviewAesthetics ?? 5));
+    setManagerEditContractData(getPaymentDetailsText(profile.contractData as any));
+  };
+
+  const toggleManagerEditSpecialization = (value: string) => {
+    setManagerEditSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleManagerEditVerifiedSpecialization = (value: string) => {
+    setManagerEditVerifiedSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleManagerEditDay = (value: string) => {
+    setManagerEditUnavailableDays((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
   };
 
   const loadTasks = async () => {
@@ -531,6 +589,83 @@ export default function App() {
     setModerationSpeed("5");
     setModerationAesthetics("5");
     setModerationMessage("");
+  };
+
+  const openRegistryExecutorEditor = (profile: ExecutorProfile) => {
+    setEditingRegistryTelegramId(Number(profile.telegramId));
+    fillManagerExecutorForm(profile);
+    setManagerExecutorMessage("");
+    setIsManagerEditingRegistryExecutor(true);
+  };
+
+  const handleManagerSaveExecutor = async () => {
+    if (!selectedApprovedExecutor?.telegramId) {
+      setManagerExecutorMessage("Исполнитель не выбран");
+      return;
+    }
+
+    if (!managerEditFullName.trim() || !managerEditContact.trim()) {
+      setManagerExecutorMessage("Имя и контакт обязательны");
+      return;
+    }
+
+    if (!managerEditSpecializations.length) {
+      setManagerExecutorMessage("Нужна хотя бы одна специализация");
+      return;
+    }
+
+    if (!managerEditVerifiedSpecializations.length) {
+      setManagerExecutorMessage("Нужна хотя бы одна подтверждённая специализация");
+      return;
+    }
+
+    try {
+      setIsSavingManagerExecutor(true);
+      setManagerExecutorMessage("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const username = telegram?.initDataUnsafe?.user?.username || null;
+      const managerContact = username ? `@${username}` : createManagerContact.trim() || "Менеджер";
+
+      const response = await fetch(`${API_BASE}/api/executors/manager-update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: selectedApprovedExecutor.telegramId,
+          managerContact,
+          fullName: managerEditFullName.trim(),
+          telegramContact: managerEditContact.trim(),
+          specializations: managerEditSpecializations,
+          verifiedSpecializations: managerEditVerifiedSpecializations,
+          portfolio: managerEditPortfolio.trim() || null,
+          paymentMethod: managerEditPaymentMethod.trim() || null,
+          paymentDetails: managerEditPaymentDetails.trim() || null,
+          unavailableDays: managerEditUnavailableDays,
+          unavailableTime: managerEditUnavailableTime.trim() || "",
+          reviewAccuracy: Number(managerEditReviewAccuracy),
+          reviewSpeed: Number(managerEditReviewSpeed),
+          reviewAesthetics: Number(managerEditReviewAesthetics),
+          contractData: managerEditContractData.trim() || null
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Manager update failed");
+      }
+
+      setManagerExecutorMessage("Карточка исполнителя обновлена");
+      setIsManagerEditingRegistryExecutor(false);
+      await loadApprovedExecutors();
+    } catch (error) {
+      console.error("Failed to save executor by manager:", error);
+      setManagerExecutorMessage("Не удалось сохранить изменения");
+    } finally {
+      setIsSavingManagerExecutor(false);
+    }
   };
 
   const handleModerateExecutor = async (decision: "approve" | "reject") => {
@@ -1363,6 +1498,140 @@ export default function App() {
                           </div>
                         ) : (
                           <div className="space-y-3">
+                            {isManagerEditingRegistryExecutor ? (
+                              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                                <div className="mb-4 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Редактирование исполнителя</div>
+                                    <div className="text-base font-semibold text-white">{selectedApprovedExecutor?.fullName || "Исполнитель"}</div>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setIsManagerEditingRegistryExecutor(false);
+                                      setManagerExecutorMessage("");
+                                    }}
+                                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70"
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <FormInput value={managerEditFullName} onChange={(e) => setManagerEditFullName(e.target.value)} placeholder="Имя и фамилия" />
+                                  <FormInput value={managerEditContact} onChange={(e) => setManagerEditContact(e.target.value)} placeholder="Контакт" />
+                                  <FormInput value={managerEditPortfolio} onChange={(e) => setManagerEditPortfolio(e.target.value)} placeholder="Портфолио" />
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Специализации</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {SPECIALIZATION_OPTIONS.map((item) => {
+                                        const active = managerEditSpecializations.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-spec-${item}`}
+                                            onClick={() => toggleManagerEditSpecialization(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Подтверждённые специализации</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {SPECIALIZATION_OPTIONS.map((item) => {
+                                        const active = managerEditVerifiedSpecializations.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-vspec-${item}`}
+                                            onClick={() => toggleManagerEditVerifiedSpecialization(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {PAYMENT_OPTIONS.map((item) => {
+                                        const active = managerEditPaymentMethod === item;
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-pay-${item}`}
+                                            onClick={() => setManagerEditPaymentMethod(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <FormTextarea
+                                    value={managerEditPaymentDetails}
+                                    onChange={(e) => setManagerEditPaymentDetails(e.target.value)}
+                                    placeholder={getPaymentPrompt(managerEditPaymentMethod).placeholder}
+                                  />
+                                  <FormTextarea
+                                    value={managerEditContractData}
+                                    onChange={(e) => setManagerEditContractData(e.target.value)}
+                                    placeholder="Договор с исполнителем: ссылка, описание или идентификатор файла"
+                                  />
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Недоступные дни</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {DAY_OPTIONS.map((item) => {
+                                        const active = managerEditUnavailableDays.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-day-${item}`}
+                                            onClick={() => toggleManagerEditDay(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <FormInput value={managerEditUnavailableTime} onChange={(e) => setManagerEditUnavailableTime(e.target.value)} placeholder="Недоступные часы" />
+
+                                  <div className="grid grid-cols-3 gap-3">
+                                    <FormInput value={managerEditReviewAccuracy} onChange={(e) => setManagerEditReviewAccuracy(e.target.value)} placeholder="ТЗ" />
+                                    <FormInput value={managerEditReviewSpeed} onChange={(e) => setManagerEditReviewSpeed(e.target.value)} placeholder="Сроки" />
+                                    <FormInput value={managerEditReviewAesthetics} onChange={(e) => setManagerEditReviewAesthetics(e.target.value)} placeholder="Эстетика" />
+                                  </div>
+
+                                  {managerExecutorMessage ? (
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/80">
+                                      {managerExecutorMessage}
+                                    </div>
+                                  ) : null}
+
+                                  <button
+                                    onClick={() => void handleManagerSaveExecutor()}
+                                    disabled={isSavingManagerExecutor}
+                                    className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                                  >
+                                    {isSavingManagerExecutor ? "Сохраняю..." : "Сохранить карточку"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                             {approvedExecutors.map((profile, index) => (
                               <div key={`${profile.telegramId}-${index}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
                                 <div className="mb-3 flex items-start justify-between gap-3">
