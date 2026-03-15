@@ -246,6 +246,17 @@ export default function App() {
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
 
+  const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
+  const [isLoadingPendingExecutors, setIsLoadingPendingExecutors] = useState(false);
+  const [pendingExecutorsError, setPendingExecutorsError] = useState("");
+  const [selectedPendingTelegramId, setSelectedPendingTelegramId] = useState<number | null>(null);
+  const [moderationVerifiedSpecializations, setModerationVerifiedSpecializations] = useState<string[]>([]);
+  const [moderationAccuracy, setModerationAccuracy] = useState("5");
+  const [moderationSpeed, setModerationSpeed] = useState("5");
+  const [moderationAesthetics, setModerationAesthetics] = useState("5");
+  const [moderationMessage, setModerationMessage] = useState("");
+  const [isModeratingExecutor, setIsModeratingExecutor] = useState(false);
+
   const [createTitle, setCreateTitle] = useState("");
   const [createCategories, setCreateCategories] = useState<string[]>([]);
   const [createDeadlineDate, setCreateDeadlineDate] = useState("");
@@ -273,6 +284,11 @@ export default function App() {
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
+
+  const selectedPendingExecutor = useMemo(
+    () => pendingExecutors.find((item) => Number(item.telegramId) === Number(selectedPendingTelegramId)) || null,
+    [pendingExecutors, selectedPendingTelegramId]
+  );
 
   const fillExecutorFormFromProfile = (profile: ExecutorProfile | null) => {
     if (!profile) return;
@@ -315,10 +331,16 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (screen === "managerApp") {
+    if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks();
     }
-  }, [screen]);
+  }, [screen, activeBottomTab]);
+
+  useEffect(() => {
+    if (screen === "managerApp" && activeBottomTab === "applications") {
+      void loadPendingExecutors();
+    }
+  }, [screen, activeBottomTab]);
 
   const resetExecutorForm = () => {
     setExecutorFormError("");
@@ -420,6 +442,113 @@ export default function App() {
     setExecutorUnavailableDays((prev) =>
       prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
     );
+  };
+
+  const toggleModerationVerifiedSpecialization = (value: string) => {
+    setModerationVerifiedSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const loadPendingExecutors = async () => {
+    try {
+      setIsLoadingPendingExecutors(true);
+      setPendingExecutorsError("");
+      setModerationMessage("");
+
+      const response = await fetch(`${API_BASE}/api/executors/pending`, {
+        method: "GET"
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load pending executors");
+      }
+
+      const list = Array.isArray(data.executors) ? data.executors : [];
+      setPendingExecutors(list);
+
+      if (!list.length) {
+        setSelectedPendingTelegramId(null);
+        return;
+      }
+
+      const nextSelected =
+        list.find((item: ExecutorProfile) => Number(item.telegramId) === Number(selectedPendingTelegramId)) ||
+        list[0];
+
+      setSelectedPendingTelegramId(Number(nextSelected.telegramId));
+      setModerationVerifiedSpecializations(nextSelected.specializations || []);
+    } catch (error) {
+      console.error("Failed to load pending executors:", error);
+      setPendingExecutorsError("Не удалось загрузить заявки исполнителей");
+    } finally {
+      setIsLoadingPendingExecutors(false);
+    }
+  };
+
+  const openPendingExecutor = (profile: ExecutorProfile) => {
+    setSelectedPendingTelegramId(Number(profile.telegramId));
+    setModerationVerifiedSpecializations(profile.specializations || []);
+    setModerationAccuracy("5");
+    setModerationSpeed("5");
+    setModerationAesthetics("5");
+    setModerationMessage("");
+  };
+
+  const handleModerateExecutor = async (decision: "approve" | "reject") => {
+    if (!selectedPendingExecutor?.telegramId) return;
+
+    if (decision === "approve" && !moderationVerifiedSpecializations.length) {
+      setModerationMessage("Выбери хотя бы одну подтверждённую специализацию");
+      return;
+    }
+
+    try {
+      setIsModeratingExecutor(true);
+      setModerationMessage("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const username = telegram?.initDataUnsafe?.user?.username || null;
+      const managerContact = username ? `@${username}` : createManagerContact.trim() || "Менеджер";
+
+      const response = await fetch(`${API_BASE}/api/executors/moderate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: selectedPendingExecutor.telegramId,
+          decision,
+          managerContact,
+          managerTelegramId: telegram?.initDataUnsafe?.user?.id || null,
+          verifiedSpecializations: moderationVerifiedSpecializations,
+          reviewAccuracy: Number(moderationAccuracy),
+          reviewSpeed: Number(moderationSpeed),
+          reviewAesthetics: Number(moderationAesthetics)
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Moderation failed");
+      }
+
+      setModerationMessage(
+        decision === "approve"
+          ? "Исполнитель подтверждён"
+          : "Исполнитель отклонён"
+      );
+
+      await loadPendingExecutors();
+    } catch (error) {
+      console.error("Failed to moderate executor:", error);
+      setModerationMessage("Не удалось сохранить решение");
+    } finally {
+      setIsModeratingExecutor(false);
+    }
   };
 
   const resetCreateForm = () => {
@@ -957,9 +1086,9 @@ export default function App() {
                 <div className="mb-4 flex items-center justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : "Задачи"}</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "applications" ? "Заявки исполнителей" : "Задачи"}</div>
                   </div>
-                  <button onClick={() => void loadTasks()} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                  <button onClick={() => { if (activeBottomTab === "applications") { void loadPendingExecutors(); } else { void loadTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
                 {activeBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
@@ -988,6 +1117,186 @@ export default function App() {
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
                       <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)}</AnimatePresence></div>
+                    )}
+                  </>
+                ) : activeBottomTab === "applications" ? (
+                  <>
+                    {isLoadingPendingExecutors ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                        Загружаю заявки исполнителей...
+                      </div>
+                    ) : pendingExecutorsError ? (
+                      <div className="space-y-3">
+                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                          {pendingExecutorsError}
+                        </div>
+                        <button
+                          onClick={() => void loadPendingExecutors()}
+                          className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                        >
+                          Повторить загрузку
+                        </button>
+                      </div>
+                    ) : !pendingExecutors.length ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                        Сейчас нет новых анкет на модерации.
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="space-y-3">
+                          {pendingExecutors.map((profile) => {
+                            const active = Number(profile.telegramId) === Number(selectedPendingTelegramId);
+                            return (
+                              <button
+                                key={String(profile.telegramId)}
+                                onClick={() => openPendingExecutor(profile)}
+                                className={cn(
+                                  "w-full rounded-[28px] border p-4 text-left transition",
+                                  active
+                                    ? "border-[#56FFEF]/30 bg-[#56FFEF]/10"
+                                    : "border-white/10 bg-white/[0.04] hover:bg-white/[0.06]"
+                                )}
+                              >
+                                <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                  На модерации
+                                </div>
+                                <div className="text-base font-semibold text-white">
+                                  {profile.fullName || "Без имени"}
+                                </div>
+                                <div className="mt-2 text-sm text-white/55">
+                                  {(profile.specializations || []).join(", ") || "—"}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {selectedPendingExecutor ? (
+                          <div className="space-y-3 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                            <div>
+                              <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                Карточка исполнителя
+                              </div>
+                              <div className="text-xl font-semibold text-white">
+                                {selectedPendingExecutor.fullName || "Без имени"}
+                              </div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID исполнителя</div>
+                              <div>{selectedPendingExecutor.executorCode || "—"}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div>
+                              <div>{selectedPendingExecutor.telegramContact || "—"}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+                              <div className="break-all">{selectedPendingExecutor.portfolio || "—"}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ выплаты</div>
+                              <div>{selectedPendingExecutor.paymentMethod || "—"}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
+                              <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(selectedPendingExecutor.paymentDetails)}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
+                              <div>{selectedPendingExecutor.unavailableDays?.length ? selectedPendingExecutor.unavailableDays.join(", ") : "—"}</div>
+                            </div>
+
+                            <div className="rounded-2xl bg-black/20 p-3">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные часы</div>
+                              <div>{selectedPendingExecutor.unavailableTime || "—"}</div>
+                            </div>
+
+                            <div className="rounded-[24px] border border-white/10 bg-white/5 p-4">
+                              <div className="mb-3 text-sm text-white/55">Подтверждённые специализации</div>
+                              <div className="flex flex-wrap gap-2">
+                                {SPECIALIZATION_OPTIONS.map((item) => {
+                                  const active = moderationVerifiedSpecializations.includes(item);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={item}
+                                      onClick={() => toggleModerationVerifiedSpecialization(item)}
+                                      className={cn(
+                                        "rounded-full border px-3 py-2 text-sm transition",
+                                        active
+                                          ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
+                                          : "border-white/10 bg-white/5 text-white/65"
+                                      )}
+                                    >
+                                      {item}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3">
+                              <FormInput
+                                type="number"
+                                min="1"
+                                max="5"
+                                value={moderationAccuracy}
+                                onChange={(e) => setModerationAccuracy(e.target.value)}
+                                placeholder="ТЗ"
+                              />
+                              <FormInput
+                                type="number"
+                                min="1"
+                                max="5"
+                                value={moderationSpeed}
+                                onChange={(e) => setModerationSpeed(e.target.value)}
+                                placeholder="Сроки"
+                              />
+                              <FormInput
+                                type="number"
+                                min="1"
+                                max="5"
+                                value={moderationAesthetics}
+                                onChange={(e) => setModerationAesthetics(e.target.value)}
+                                placeholder="Эстетика"
+                              />
+                            </div>
+
+                            <div className="text-xs text-white/35">
+                              Оценка: ТЗ × 0.5, сроки × 0.35, эстетика × 0.15. Новичок получает приоритет на первые 2 заказа.
+                            </div>
+
+                            {moderationMessage ? (
+                              <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+                                {moderationMessage}
+                              </div>
+                            ) : null}
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <button
+                                onClick={() => void handleModerateExecutor("reject")}
+                                disabled={isModeratingExecutor}
+                                className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10 disabled:opacity-60"
+                              >
+                                Отклонить
+                              </button>
+                              <button
+                                onClick={() => void handleModerateExecutor("approve")}
+                                disabled={isModeratingExecutor}
+                                className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                              >
+                                {isModeratingExecutor ? "Сохраняю..." : "Подтвердить"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     )}
                   </>
                 ) : activeBottomTab === "create" ? (
