@@ -35,9 +35,38 @@ type TasksResponse = {
   archived: Task[];
 };
 
+type ExecutorProfile = {
+  telegramId?: number;
+  executorCode?: string;
+  username?: string | null;
+  telegramContact?: string | null;
+  fullName?: string | null;
+  specializations?: string[];
+  verifiedSpecializations?: string[];
+  portfolio?: string | null;
+  paymentMethod?: string | null;
+  unavailableDays?: string[];
+  unavailableTime?: string | null;
+  status?: string | null;
+  approvedBy?: string | null;
+  approvedByManagerId?: number | null;
+  rating?: number | null;
+  completedOrders?: number;
+};
+
 const API_BASE = "https://creative-conveyor-backend.onrender.com";
 
 const SPECIALIZATION_OPTIONS = ["Статика", "Моушен", "Лендинги"];
+const DAY_OPTIONS = [
+  "Понедельник",
+  "Вторник",
+  "Среда",
+  "Четверг",
+  "Пятница",
+  "Суббота",
+  "Воскресенье"
+];
+const PAYMENT_OPTIONS = ["Самозанятость", "ИП", "Переводом"];
 
 const topTabs = [
   { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
@@ -133,6 +162,15 @@ function FormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
+function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className="min-h-[120px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+    />
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome"
@@ -146,8 +184,20 @@ export default function App() {
     | "executorApp"
   >("welcome");
 
-  const [executor, setExecutor] = useState<any>(null);
+  const [executor, setExecutor] = useState<ExecutorProfile | null>(null);
   const [executorCode, setExecutorCode] = useState("");
+  const [executorError, setExecutorError] = useState("");
+  const [executorInfo, setExecutorInfo] = useState("");
+
+  const [executorFullName, setExecutorFullName] = useState("");
+  const [executorContact, setExecutorContact] = useState("");
+  const [executorSpecializations, setExecutorSpecializations] = useState<string[]>([]);
+  const [executorPortfolio, setExecutorPortfolio] = useState("");
+  const [executorPaymentMethod, setExecutorPaymentMethod] = useState("");
+  const [executorPaymentDetails, setExecutorPaymentDetails] = useState("");
+  const [executorUnavailableDays, setExecutorUnavailableDays] = useState<string[]>([]);
+  const [executorUnavailableTime, setExecutorUnavailableTime] = useState("");
+  const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -183,6 +233,7 @@ export default function App() {
     const username = telegram?.initDataUnsafe?.user?.username;
     if (username) {
       setCreateManagerContact(`@${username}`);
+      setExecutorContact(`@${username}`);
     }
   }, []);
 
@@ -222,8 +273,27 @@ export default function App() {
     }
   }, [screen]);
 
+  const resetExecutorForm = () => {
+    setExecutorError("");
+    setExecutorInfo("");
+    setExecutorFullName("");
+    setExecutorSpecializations([]);
+    setExecutorPortfolio("");
+    setExecutorPaymentMethod("");
+    setExecutorPaymentDetails("");
+    setExecutorUnavailableDays([]);
+    setExecutorUnavailableTime("");
+
+    const telegram = (window as any)?.Telegram?.WebApp;
+    const username = telegram?.initDataUnsafe?.user?.username;
+    setExecutorContact(username ? `@${username}` : "");
+  };
+
   const loadExecutor = async () => {
     try {
+      setExecutorError("");
+      setExecutorInfo("");
+
       const telegram = (window as any)?.Telegram?.WebApp;
       telegram?.ready?.();
 
@@ -288,6 +358,18 @@ export default function App() {
   const toggleCategory = (category: string) => {
     setCreateCategories((prev) =>
       prev.includes(category) ? prev.filter((item) => item !== category) : [...prev, category]
+    );
+  };
+
+  const toggleExecutorSpecialization = (value: string) => {
+    setExecutorSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleExecutorDay = (value: string) => {
+    setExecutorUnavailableDays((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
     );
   };
 
@@ -383,577 +465,3 @@ export default function App() {
 
   const handleExecutorCodeLogin = async () => {
     if (!executorCode.trim()) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE}/api/executors/login-by-code`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          executorCode: executorCode.trim()
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data?.executor) {
-        return;
-      }
-
-      setExecutor(data.executor);
-
-      if (data.executor.status === "На модерации") {
-        setScreen("executorPending");
-        return;
-      }
-
-      if (data.executor.status === "Подтверждён") {
-        setScreen("executorApp");
-        return;
-      }
-    } catch (error) {
-      console.error("Executor code login failed:", error);
-    }
-  };
-
-  return (
-    <div
-      className="min-h-screen bg-[#09090B] text-white"
-      style={{ fontFamily: "Involve, Inter, system-ui, sans-serif" }}
-    >
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-[radial-gradient(circle_at_top,rgba(86,255,239,0.14),transparent_34%),linear-gradient(180deg,#0b0b10_0%,#09090b_100%)]">
-        <AnimatePresence mode="wait">
-          {screen === "welcome" && (
-            <motion.div
-              key="welcome"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <div className="mb-10 mt-auto">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  ЛЭНД
-                </div>
-                <h1 className="max-w-[320px] text-[34px] font-semibold leading-[1.02] tracking-[-0.04em] text-white">
-                  Привет! Это креативный конвейер ЛЭНД
-                </h1>
-                <p className="mt-4 text-base text-white/45">Выбери роль</p>
-              </div>
-
-              <div className="mb-auto space-y-3">
-                <RoleButton label="Я менеджер" onClick={() => setScreen("managerPassword")} />
-                <RoleButton
-                  label="Я исполнитель"
-                  onClick={() => {
-                    setScreen("executorLoading");
-                    void loadExecutor();
-                  }}
-                />
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "executorLoading" && (
-            <motion.div
-              key="executorLoading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex min-h-screen flex-col items-center justify-center px-6 text-center"
-            >
-              <div className="mb-4 h-16 w-16 rounded-full bg-[#56FFEF]/15 blur-[2px]" />
-              <div className="text-base text-white/75">Проверяем ваш аккаунт исполнителя…</div>
-            </motion.div>
-          )}
-
-          {screen === "executorRegister" && (
-            <motion.div
-              key="executorRegister"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вы ещё не зарегистрированы
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Заполни анкету исполнителя или войди по ID, если ты уже был зарегистрирован раньше.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <button
-                  onClick={() => setScreen("executorForm")}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95"
-                >
-                  Заполнить анкету
-                </button>
-
-                <button
-                  onClick={() => setScreen("executorCodeLogin")}
-                  className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10"
-                >
-                  У меня уже есть ID исполнителя
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "executorForm" && (
-            <motion.div
-              key="executorForm"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("executorRegister")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Анкета исполнителя
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Здесь следующим шагом мы подключим полную форму регистрации с сохранением в backend.
-                </p>
-              </div>
-
-              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 text-sm text-white/55">
-                В этом месте будет полноценная анкета: имя, контакт, специализации, портфолио,
-                выплаты, недоступные дни и часы.
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "executorCodeLogin" && (
-            <motion.div
-              key="executorCodeLogin"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("executorRegister")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вход по ID исполнителя
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Введи резервный ID, который был присвоен тебе при регистрации.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <FormInput
-                  value={executorCode}
-                  onChange={(e) => setExecutorCode(e.target.value.toUpperCase())}
-                  placeholder="Например: EX-7K3D9A"
-                />
-
-                <button
-                  onClick={() => void handleExecutorCodeLogin()}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95"
-                >
-                  Войти
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "executorPending" && (
-            <motion.div
-              key="executorPending"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Анкета на модерации
-                </h2>
-                <p className="mt-3 text-sm text-white/45">
-                  Менеджер проверяет твою анкету. После подтверждения ты получишь доступ к задачам.
-                </p>
-              </div>
-
-              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
-                <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">
-                  ID исполнителя
-                </div>
-                <div className="text-base text-white">{executor?.executorCode || "—"}</div>
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "executorApp" && (
-            <motion.div
-              key="executorApp"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">
-                  Исполнитель
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Кабинет исполнителя
-                </h2>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    ID исполнителя
-                  </div>
-                  <div className="text-white">{executor?.executorCode || "—"}</div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    Контакт
-                  </div>
-                  <div className="text-white">{executor?.telegramContact || "—"}</div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                    Статус
-                  </div>
-                  <div className="text-white">{executor?.status || "—"}</div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "managerPassword" && (
-            <motion.div
-              key="managerPassword"
-              initial={{ opacity: 0, x: 18 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col px-6 pb-8 pt-12"
-            >
-              <button
-                onClick={() => setScreen("welcome")}
-                className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
-              >
-                Назад
-              </button>
-
-              <div className="mb-8">
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                  <Lock className="h-5 w-5 text-white/70" />
-                </div>
-                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">
-                  Вход менеджера
-                </h2>
-                <p className="mt-2 text-sm text-white/45">
-                  Введи пароль, чтобы открыть менеджерский интерфейс
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <FormInput
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Пароль"
-                />
-                {passwordError ? (
-                  <div className="px-1 text-sm text-rose-300">{passwordError}</div>
-                ) : null}
-                <button
-                  onClick={handleManagerLogin}
-                  className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]"
-                >
-                  Войти
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {screen === "managerApp" && (
-            <motion.div
-              key="managerApp"
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -18 }}
-              transition={{ duration: 0.22 }}
-              className="flex min-h-screen flex-col"
-            >
-              <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">
-                      Креативный конвейер ЛЭНД
-                    </div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">
-                      {activeBottomTab === "create" ? "Создать задачу" : "Задачи"}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => void loadTasks()}
-                    className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"
-                  >
-                    <Search className="h-5 w-5" />
-                  </button>
-                </div>
-
-                {activeBottomTab === "tasks" && (
-                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
-                    {topTabs.map((tab) => {
-                      const Icon = tab.icon;
-                      const active = activeTopTab === tab.key;
-
-                      return (
-                        <button
-                          key={tab.key}
-                          onClick={() => setActiveTopTab(tab.key)}
-                          className={cn(
-                            "rounded-[18px] px-3 py-3 text-left transition",
-                            active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                          )}
-                        >
-                          <Icon className="mb-2 h-4 w-4" />
-                          <div className="text-[12px] font-medium leading-4">{tab.label}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-1 px-5 pb-28 pt-4">
-                {activeBottomTab === "tasks" ? (
-                  <>
-                    <div className="mb-4 flex items-center justify-between">
-                      <div className="text-sm text-white/45">
-                        {activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}
-                        {activeTopTab === "active" && "Задачи, которые сейчас в работе"}
-                        {activeTopTab === "archived" && "Завершённые и архивные задачи"}
-                      </div>
-                    </div>
-
-                    {isLoadingTasks ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
-                        Загружаю задачи...
-                      </div>
-                    ) : tasksError ? (
-                      <div className="space-y-3">
-                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                          {tasksError}
-                        </div>
-                        <button
-                          onClick={() => void loadTasks()}
-                          className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-                        >
-                          Повторить загрузку
-                        </button>
-                      </div>
-                    ) : visibleTasks.length === 0 ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
-                        Здесь пока нет задач.
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <AnimatePresence mode="popLayout">
-                          {visibleTasks.map((task) => (
-                            <TaskCard key={task.id} task={task} />
-                          ))}
-                        </AnimatePresence>
-                      </div>
-                    )}
-                  </>
-                ) : activeBottomTab === "create" ? (
-                  <div className="space-y-3">
-                    <FormInput
-                      value={createTitle}
-                      onChange={(e) => setCreateTitle(e.target.value)}
-                      placeholder="Название задачи"
-                    />
-
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                      <div className="mb-3 text-sm text-white/55">Категории</div>
-                      <div className="flex flex-wrap gap-2">
-                        {SPECIALIZATION_OPTIONS.map((item) => {
-                          const active = createCategories.includes(item);
-
-                          return (
-                            <button
-                              type="button"
-                              key={item}
-                              onClick={() => toggleCategory(item)}
-                              className={cn(
-                                "rounded-full border px-3 py-2 text-sm transition",
-                                active
-                                  ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
-                                  : "border-white/10 bg-white/5 text-white/65"
-                              )}
-                            >
-                              {item}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <FormInput
-                      type="date"
-                      value={createDeadlineDate}
-                      onChange={(e) => setCreateDeadlineDate(e.target.value)}
-                      placeholder="Дата дедлайна"
-                    />
-
-                    <FormInput
-                      type="time"
-                      value={createDeadlineTime}
-                      onChange={(e) => setCreateDeadlineTime(e.target.value)}
-                      placeholder="Время дедлайна"
-                    />
-
-                    <FormInput
-                      value={createPrice}
-                      onChange={(e) => setCreatePrice(e.target.value)}
-                      placeholder="Стоимость"
-                    />
-
-                    <FormInput
-                      value={createManagerContact}
-                      onChange={(e) => setCreateManagerContact(e.target.value)}
-                      placeholder="Контакт менеджера"
-                    />
-
-                    <FormInput
-                      value={createSources}
-                      onChange={(e) => setCreateSources(e.target.value)}
-                      placeholder="Источники (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createRefs}
-                      onChange={(e) => setCreateRefs(e.target.value)}
-                      placeholder="Референсы (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createDeliveryTarget}
-                      onChange={(e) => setCreateDeliveryTarget(e.target.value)}
-                      placeholder="Куда отгружать результат (необязательно)"
-                    />
-
-                    <FormInput
-                      value={createComment}
-                      onChange={(e) => setCreateComment(e.target.value)}
-                      placeholder="Комментарий (необязательно)"
-                    />
-
-                    {createError ? (
-                      <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                        {createError}
-                      </div>
-                    ) : null}
-
-                    {createSuccess ? (
-                      <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
-                        {createSuccess}
-                      </div>
-                    ) : null}
-
-                    <button
-                      onClick={handleCreateTask}
-                      disabled={isCreating}
-                      className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
-                    >
-                      {isCreating ? "Создаю..." : "Создать задачу"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex h-full items-center justify-center px-6 text-center text-white/40">
-                    Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.
-                  </div>
-                )}
-              </div>
-
-              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
-                <div className="grid grid-cols-5 gap-1">
-                  {bottomTabs.map((tab) => {
-                    const Icon = tab.icon;
-                    const active = activeBottomTab === tab.key;
-
-                    return (
-                      <button
-                        key={tab.key}
-                        onClick={() => setActiveBottomTab(tab.key)}
-                        className={cn(
-                          "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition",
-                          active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]"
-                        )}
-                      >
-                        <Icon className="h-5 w-5" />
-                        <span className="text-[10px] leading-none">{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
