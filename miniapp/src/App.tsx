@@ -43,7 +43,7 @@ const topTabs = [
   { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
   { key: "active", label: "Активные", icon: Clock3 },
   { key: "archived", label: "Архивные", icon: Archive }
-];
+] as const;
 
 const bottomTabs = [
   { key: "tasks", label: "Задачи", icon: Briefcase },
@@ -86,9 +86,7 @@ function TaskCard({ task }: { task: Task }) {
           <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">
             Задача #{task.id}
           </div>
-          <div className="text-base font-semibold leading-5 text-white">
-            {task.title}
-          </div>
+          <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
         </div>
         <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">
           Открыть
@@ -155,11 +153,24 @@ export default function App() {
   const [createDeadlineDate, setCreateDeadlineDate] = useState("");
   const [createDeadlineTime, setCreateDeadlineTime] = useState("");
   const [createPrice, setCreatePrice] = useState("");
-  const [createManagerContact, setCreateManagerContact] = useState("@YYT1M");
+  const [createManagerContact, setCreateManagerContact] = useState("");
+  const [createSources, setCreateSources] = useState("");
+  const [createRefs, setCreateRefs] = useState("");
+  const [createDeliveryTarget, setCreateDeliveryTarget] = useState("");
   const [createComment, setCreateComment] = useState("");
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    const telegram = (window as any)?.Telegram?.WebApp;
+    telegram?.ready?.();
+
+    const username = telegram?.initDataUnsafe?.user?.username;
+    if (username) {
+      setCreateManagerContact(`@${username}`);
+    }
+  }, []);
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
 
@@ -202,6 +213,7 @@ export default function App() {
       setPasswordError("Введи пароль менеджера");
       return;
     }
+
     setPasswordError("");
     setScreen("managerApp");
   };
@@ -218,6 +230,9 @@ export default function App() {
     setCreateDeadlineDate("");
     setCreateDeadlineTime("");
     setCreatePrice("");
+    setCreateSources("");
+    setCreateRefs("");
+    setCreateDeliveryTarget("");
     setCreateComment("");
     setCreateError("");
     setCreateSuccess("");
@@ -273,6 +288,9 @@ export default function App() {
           deadlineDate: createDeadlineDate.trim(),
           deadlineTime: createDeadlineTime.trim(),
           price: createPrice.trim(),
+          sources: createSources.trim() || null,
+          refs_data: createRefs.trim() || null,
+          deliveryTarget: createDeliveryTarget.trim() || null,
           comment: createComment.trim() || null
         })
       });
@@ -283,8 +301,8 @@ export default function App() {
         throw new Error(data?.error || "Failed to create task");
       }
 
-      setCreateSuccess("Задача создана");
       resetCreateForm();
+      setCreateSuccess("Задача создана");
       await loadTasks();
       setActiveBottomTab("tasks");
       setActiveTopTab("waiting");
@@ -413,7 +431,7 @@ export default function App() {
                       return (
                         <button
                           key={tab.key}
-                          onClick={() => setActiveTopTab(tab.key as typeof activeTopTab)}
+                          onClick={() => setActiveTopTab(tab.key)}
                           className={cn(
                             "rounded-[18px] px-3 py-3 text-left transition",
                             active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
@@ -485,6 +503,7 @@ export default function App() {
 
                           return (
                             <button
+                              type="button"
                               key={item}
                               onClick={() => toggleCategory(item)}
                               className={cn(
@@ -525,6 +544,24 @@ export default function App() {
                       value={createManagerContact}
                       onChange={(e) => setCreateManagerContact(e.target.value)}
                       placeholder="Контакт менеджера"
+                    />
+
+                    <FormInput
+                      value={createSources}
+                      onChange={(e) => setCreateSources(e.target.value)}
+                      placeholder="Источники (необязательно)"
+                    />
+
+                    <FormInput
+                      value={createRefs}
+                      onChange={(e) => setCreateRefs(e.target.value)}
+                      placeholder="Референсы (необязательно)"
+                    />
+
+                    <FormInput
+                      value={createDeliveryTarget}
+                      onChange={(e) => setCreateDeliveryTarget(e.target.value)}
+                      placeholder="Куда отгружать результат (необязательно)"
                     />
 
                     <FormInput
