@@ -481,6 +481,7 @@ export default function App() {
   const [stageLoading, setStageLoading] = useState(false);
   const [fixesTaskId, setFixesTaskId] = useState<number | null>(null);
   const [fixesValue, setFixesValue] = useState("");
+  const [fixesClientFault, setFixesClientFault] = useState(false);
   const [fixesError, setFixesError] = useState("");
   const [fixesLoading, setFixesLoading] = useState(false);
 
@@ -711,15 +712,20 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (screen === "managerApp") {
+    const hasOpenModal = Boolean(stageTaskId || fixesTaskId || selectedTask);
+    if (screen === "managerApp" && !hasOpenModal) {
       const id = window.setInterval(() => {
-        void loadTasks();
-        void loadPendingExecutors();
-        void loadApprovedExecutors();
-      }, 15000);
+        if (activeBottomTab === "tasks") {
+          void loadTasks();
+        }
+        if (activeBottomTab === "executors") {
+          void loadPendingExecutors();
+          void loadApprovedExecutors();
+        }
+      }, 30000);
       return () => window.clearInterval(id);
     }
-  }, [screen]);
+  }, [screen, activeBottomTab, stageTaskId, fixesTaskId, selectedTask]);
 
   useEffect(() => {
     if (screen === "executorApp" && executor?.telegramId) {
@@ -728,13 +734,14 @@ export default function App() {
   }, [screen, executor?.telegramId]);
 
   useEffect(() => {
-    if (screen === "executorApp" && executor?.telegramId) {
+    const hasOpenModal = Boolean(stageTaskId || fixesTaskId || selectedTask);
+    if (screen === "executorApp" && executor?.telegramId && !hasOpenModal) {
       const id = window.setInterval(() => {
         void loadExecutorTasks(Number(executor.telegramId));
-      }, 15000);
+      }, 30000);
       return () => window.clearInterval(id);
     }
-  }, [screen, executor?.telegramId]);
+  }, [screen, executor?.telegramId, stageTaskId, fixesTaskId, selectedTask]);
 
   const resetExecutorForm = () => {
     setExecutorFormError("");
@@ -894,6 +901,23 @@ export default function App() {
       setStageError("Введи ссылку или комментарий");
       return;
     }
+
+    const currentTask =
+      executorTasks.active.find((item) => item.id === stageTaskId) ||
+      executorTasks.archived.find((item) => item.id === stageTaskId) ||
+      executorTasks.available.find((item) => item.id === stageTaskId);
+
+    const stageAllowed =
+      (stageKey === "30" && currentTask?.status === "В работе") ||
+      (stageKey === "60" && currentTask?.status === "30%") ||
+      (stageKey === "final" && (currentTask?.status === "60%" || currentTask?.status === "Правки")) ||
+      stageKey === "invoice";
+
+    if (!stageAllowed) {
+      setStageError("Статус задачи уже изменился. Обнови экран.");
+      return;
+    }
+
     try {
       setStageLoading(true);
       const response = await fetch(`${API_BASE}/api/tasks/stage-submit`, {
@@ -901,7 +925,8 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
       });
-      if (!response.ok) throw new Error("Failed stage submit");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "Failed stage submit");
       setStageTaskId(null);
       setStageKey(null);
       setStageValue("");
@@ -947,12 +972,13 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim() })
+        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim(), clientFault: fixesClientFault })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "fixes submit failed");
       setFixesTaskId(null);
       setFixesValue("");
+      setFixesClientFault(false);
       await loadTasks();
       await loadManagerTasks();
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
@@ -2412,9 +2438,18 @@ export default function App() {
             <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
               <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
+              <label className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
+                <input
+                  type="checkbox"
+                  checked={fixesClientFault}
+                  onChange={(e) => setFixesClientFault(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span>Правка по вине клиента</span>
+              </label>
               {fixesError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{fixesError}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesClientFault(false); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
                 <button onClick={() => void submitFixes()} disabled={fixesLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{fixesLoading ? "Отправляю..." : "Отправить"}</button>
               </div>
             </div>
