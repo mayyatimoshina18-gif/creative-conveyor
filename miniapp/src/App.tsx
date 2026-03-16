@@ -12,7 +12,11 @@ import {
   Clock3,
   Archive,
   CircleDot,
-  Pencil
+  Pencil,
+  X,
+  CheckCircle2,
+  Circle,
+  LoaderCircle
 } from "lucide-react";
 
 type Task = {
@@ -28,6 +32,16 @@ type Task = {
   assignedExecutorContact?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
+  myDecision?: string | null;
+  briefText?: string;
+  sourcesText?: string;
+  refsText?: string;
+  comment?: string | null;
+  stageMaterials?: {
+    thirty?: { value?: string; createdAt?: string } | null;
+    sixty?: { value?: string; createdAt?: string } | null;
+    final?: { value?: string; createdAt?: string } | null;
+  };
 };
 
 type TasksResponse = {
@@ -102,30 +116,31 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
   );
 }
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   return (
-    <motion.div
+    <motion.button
+      type="button"
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -12 }}
       transition={{ duration: 0.18 }}
-      className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.28)]"
+      onClick={onOpen}
+      className="w-full rounded-[28px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
           <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
         </div>
-        <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">Открыть</button>
+        <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+          {getCurrentStageLabel(task.status)}
+        </div>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
         {(task.type || []).map((item) => (
-          <span
-            key={item}
-            className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]"
-          >
+          <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
             {item}
           </span>
         ))}
@@ -143,7 +158,7 @@ function TaskCard({ task }: { task: Task }) {
       </div>
 
       <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -224,6 +239,185 @@ function formatDateLabel(value?: string) {
   return date.toLocaleDateString("ru-RU");
 }
 
+
+function getCurrentStageLabel(status?: string | null) {
+  if (!status) return "Не определён";
+  if (status === "Ждёт исполнителя" || status === "Есть отклики" || status === "Создана") return "Ожидает исполнителя";
+  if (status === "Назначена") return "Изучение ТЗ";
+  if (status === "ТЗ изучено") return "Взял в работу";
+  if (status === "В работе") return "Подготовка 30%";
+  if (status === "30%") return "Подготовка 60%";
+  if (status === "60%" || status === "Правки") return "Финальная сдача";
+  if (status === "На проверке") return "Проверка менеджером";
+  if (status === "Выполнена" || status === "Не оплачена") return "Ожидает оплату";
+  if (status === "Оплачена") return "Завершено";
+  return status;
+}
+
+function getPipelineSteps(task: Task) {
+  const status = task.status || "";
+  const materials = task.stageMaterials || {};
+  return [
+    {
+      key: "brief",
+      title: "Изучил ТЗ",
+      state: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+        ? "done"
+        : status === "Назначена"
+        ? "active"
+        : "upcoming",
+      meta: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+        ? "Подтверждено исполнителем"
+        : status === "Назначена"
+        ? "Текущий этап"
+        : "Ещё не начато"
+    },
+    {
+      key: "30",
+      title: "30%",
+      state: status === "В работе" ? "active" : materials.thirty || ["30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.thirty?.value || (status === "В работе" ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "60",
+      title: "60%",
+      state: status === "30%" ? "active" : materials.sixty || ["60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.sixty?.value || (status === "30%" ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "final",
+      title: "Финал",
+      state: status === "60%" || status === "Правки" ? "active" : materials.final || ["На проверке", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.final?.value || ((status === "60%" || status === "Правки") ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "review",
+      title: "Проверка менеджером",
+      state: status === "На проверке" ? "active" : ["Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: status === "На проверке" ? "Менеджер проверяет результат" : "Ещё не начато"
+    },
+    {
+      key: "payment",
+      title: "Оплата",
+      state: status === "Выполнена" || status === "Не оплачена" ? "active" : status === "Оплачена" ? "done" : "upcoming",
+      meta: status === "Оплачена" ? "Оплачено" : status === "Выполнена" || status === "Не оплачена" ? "Ожидает оплату" : "Ещё не начато"
+    }
+  ] as const;
+}
+
+function PipelineView({ task, compact = false }: { task: Task; compact?: boolean }) {
+  const steps = getPipelineSteps(task);
+
+  return (
+    <div className={cn("rounded-[24px] border border-white/8 bg-black/20", compact ? "p-3" : "p-4")}>
+      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">Pipeline задачи</div>
+      <div className="space-y-3">
+        {steps.map((step, index) => {
+          const active = step.state === "active";
+          const done = step.state === "done";
+          return (
+            <div key={step.key} className="relative flex gap-3">
+              <div className="flex w-5 flex-col items-center">
+                {done ? <CheckCircle2 className="h-5 w-5 text-[#56FFEF]" /> : active ? <LoaderCircle className="h-5 w-5 animate-spin text-[#56FFEF]" /> : <Circle className="h-5 w-5 text-white/25" />}
+                {index !== steps.length - 1 ? <div className={cn("mt-1 w-px flex-1", done || active ? "bg-[#56FFEF]/40" : "bg-white/10")} /> : null}
+              </div>
+              <div className="min-w-0 flex-1 pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className={cn("text-sm font-medium", active ? "text-[#56FFEF]" : "text-white")}>{step.title}</div>
+                  <div className={cn("text-[11px] uppercase tracking-[0.12em]", done ? "text-[#56FFEF]" : active ? "text-[#56FFEF]" : "text-white/35")}>
+                    {done ? "готово" : active ? "текущий" : "далее"}
+                  </div>
+                </div>
+                <div className="mt-1 text-sm text-white/45 break-words">{step.meta}</div>
+              </div>
+            </div>
+          );
+        })}
+
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+
+        {stageTaskId && stageKey ? (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 text-xl font-semibold text-white">
+                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
+              </div>
+              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
+              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+      </div>
+    </div>
+  );
+}
+
+function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => void }) {
+  if (!task) return null;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3">
+      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[32px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{task.title}</div>
+          </div>
+          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mb-4 inline-flex rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
+          Текущий этап: {getCurrentStageLabel(task.status)}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div><div>{task.deadline || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div><div>{task.price || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{task.status || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнитель</div><div>{task.assignedExecutorName || "—"}</div></div>
+        </div>
+
+        <div className="mt-4 space-y-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ТЗ</div><div className="whitespace-pre-wrap break-words">{task.briefText || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Источники</div><div className="whitespace-pre-wrap break-words">{task.sourcesText || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div className="whitespace-pre-wrap break-words">{task.refsText || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div className="whitespace-pre-wrap break-words">{task.comment || "—"}</div></div>
+        </div>
+
+        <div className="mt-4">
+          <PipelineView task={task} />
+        </div>
+
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+
+        {stageTaskId && stageKey ? (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 text-xl font-semibold text-white">
+                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
+              </div>
+              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
+              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome"
@@ -253,6 +447,17 @@ export default function App() {
   const [executorFormError, setExecutorFormError] = useState("");
   const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
   const [isExecutorEditing, setIsExecutorEditing] = useState(false);
+  const [executorBottomTab, setExecutorBottomTab] = useState<"tasks" | "profile">("tasks");
+  const [executorTaskTopTab, setExecutorTaskTopTab] = useState<"new" | "active" | "archived">("new");
+  const [executorTasks, setExecutorTasks] = useState<{ available: Task[]; active: Task[]; archived: Task[] }>({ available: [], active: [], archived: [] });
+  const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
+  const [executorTasksError, setExecutorTasksError] = useState("");
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [stageTaskId, setStageTaskId] = useState<number | null>(null);
+  const [stageKey, setStageKey] = useState<"30" | "60" | "final" | null>(null);
+  const [stageValue, setStageValue] = useState("");
+  const [stageError, setStageError] = useState("");
+  const [stageLoading, setStageLoading] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -328,6 +533,11 @@ export default function App() {
   }, []);
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+  const executorVisibleTasks = useMemo(() => {
+    if (executorTaskTopTab === "new") return executorTasks.available.filter((task) => !task.myDecision);
+    if (executorTaskTopTab === "active") return executorTasks.active;
+    return executorTasks.archived;
+  }, [executorTaskTopTab, executorTasks]);
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
 
   const selectedPendingExecutor = useMemo(
@@ -445,6 +655,12 @@ export default function App() {
     }
   }, [screen, activeBottomTab]);
 
+  useEffect(() => {
+    if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
+      void loadExecutorTasks(Number(executor.telegramId));
+    }
+  }, [screen, executorBottomTab, executorTaskTopTab, executor?.telegramId]);
+
   const resetExecutorForm = () => {
     setExecutorFormError("");
     setExecutorInfo("");
@@ -508,6 +724,8 @@ export default function App() {
       }
 
       if (data.executor.status === "Подтверждён") {
+        setExecutorBottomTab("tasks");
+        void loadExecutorTasks(Number(data.executor.telegramId));
         setScreen("executorApp");
         return;
       }
@@ -516,6 +734,110 @@ export default function App() {
     } catch (error) {
       console.error("Failed to load executor:", error);
       setScreen("executorRegister");
+    }
+  };
+
+
+  const loadExecutorTasks = async (telegramId: number) => {
+    try {
+      setIsLoadingExecutorTasks(true);
+      setExecutorTasksError("");
+      const response = await fetch(`${API_BASE}/api/tasks/executor?telegramId=${telegramId}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Failed to load executor tasks");
+      setExecutorTasks({
+        available: Array.isArray(data.available) ? data.available : [],
+        active: Array.isArray(data.active) ? data.active : [],
+        archived: Array.isArray(data.archived) ? data.archived : []
+      });
+    } catch (error) {
+      console.error("Failed to load executor tasks:", error);
+      setExecutorTasksError("Не удалось загрузить задачи исполнителя");
+    } finally {
+      setIsLoadingExecutorTasks(false);
+    }
+  };
+
+  const handleExecutorTaskDecision = async (taskId: number, decision: "accept" | "decline") => {
+    try {
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const user = telegram?.initDataUnsafe?.user;
+      const response = await fetch(`${API_BASE}/api/tasks/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, telegramId: user?.id || null, decision })
+      });
+      if (!response.ok) throw new Error("Failed to save decision");
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+      await loadTasks();
+    } catch (error) {
+      console.error("Failed to save executor decision:", error);
+      setExecutorTasksError("Не удалось обновить статус задачи");
+    }
+  };
+
+  const executorActionButtonLabel = (status?: string | null) => {
+    if (status === "Назначена") return "Подтвердить изучение ТЗ";
+    if (status === "ТЗ изучено") return "Начать работу";
+    if (status === "В работе") return "Загрузить 30%";
+    if (status === "30%") return "Загрузить 60%";
+    if (status === "60%" || status === "Правки") return "Сдать задачу";
+    return null;
+  };
+
+  const handleExecutorStageAction = async (task: Task) => {
+    const label = executorActionButtonLabel(task.status);
+    if (!label || !executor?.telegramId) return;
+
+    if (label === "Подтвердить изучение ТЗ" || label === "Начать работу") {
+      const action = label === "Подтвердить изучение ТЗ" ? "Изучил ТЗ" : "Взял в работу";
+      try {
+        const response = await fetch(`${API_BASE}/api/tasks/executor-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId: task.id, telegramId: executor.telegramId, action })
+        });
+        if (!response.ok) throw new Error("Failed executor action");
+        await loadExecutorTasks(executor.telegramId);
+        await loadTasks();
+      } catch (error) {
+        console.error("Failed executor action:", error);
+        setExecutorTasksError("Не удалось обновить этап");
+      }
+      return;
+    }
+
+    setStageTaskId(task.id);
+    setStageKey(label === "Загрузить 30%" ? "30" : label === "Загрузить 60%" ? "60" : "final");
+    setStageValue("");
+    setStageError("");
+  };
+
+  const submitStageMaterial = async () => {
+    if (!stageTaskId || !stageKey || !executor?.telegramId) return;
+    if (!stageValue.trim()) {
+      setStageError("Введи ссылку или комментарий");
+      return;
+    }
+    try {
+      setStageLoading(true);
+      const response = await fetch(`${API_BASE}/api/tasks/stage-submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
+      });
+      if (!response.ok) throw new Error("Failed stage submit");
+      setStageTaskId(null);
+      setStageKey(null);
+      setStageValue("");
+      setStageError("");
+      await loadExecutorTasks(executor.telegramId);
+      await loadTasks();
+    } catch (error) {
+      console.error("Failed to submit stage:", error);
+      setStageError("Не удалось отправить материал");
+    } finally {
+      setStageLoading(false);
     }
   };
 
@@ -895,6 +1217,8 @@ export default function App() {
       }
 
       if (data.executor.status === "Подтверждён") {
+        setExecutorBottomTab("tasks");
+        void loadExecutorTasks(Number(data.executor.telegramId));
         setScreen("executorApp");
         return;
       }
@@ -1233,46 +1557,118 @@ export default function App() {
           )}
 
           {screen === "executorApp" && (
-            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
-              <button onClick={() => { setIsExecutorEditing(false); setExecutorInfo(""); setScreen("welcome"); }} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
-
-              {!isExecutorEditing ? (
-                <>
-                  <div className="mb-8 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
-                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Кабинет исполнителя</h2>
-                    </div>
+            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col">
+              <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                    <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">{executorBottomTab === "tasks" ? "Задачи" : "Профиль"}</h2>
+                  </div>
+                  {executorBottomTab === "profile" ? (
                     <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(true); }} className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"><Pencil className="h-4 w-4" />Редактировать</button>
-                  </div>
+                  ) : null}
+                </div>
 
-                  <div className="space-y-3">
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
-                    {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                {executorBottomTab === "tasks" ? (
+                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <CircleDot className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Новые</div>
+                    </button>
+                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <Clock3 className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Активные</div>
+                    </button>
+                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <Archive className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Архив</div>
+                    </button>
                   </div>
-                </>
-              ) : (
-                <>
-                  <div className="mb-8 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
-                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Редактирование анкеты</h2>
-                    </div>
-                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Отмена</button>
-                  </div>
-                  {renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)}
-                </>
-              )}
+                ) : null}
+              </div>
+
+              <div className="flex-1 px-5 pb-28 pt-4">
+                {executorBottomTab === "tasks" ? (
+                  <>
+                    {isLoadingExecutorTasks ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
+                    ) : executorTasksError ? (
+                      <div className="space-y-3">
+                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorTasksError}</div>
+                        <button onClick={() => executor?.telegramId ? void loadExecutorTasks(Number(executor.telegramId)) : null} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button>
+                      </div>
+                    ) : executorVisibleTasks.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {executorVisibleTasks.map((task) => (
+                          <div key={task.id} className="space-y-3">
+                            <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                            {executorTaskTopTab === "new" ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "accept")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять задачу</button>
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "decline")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Скрыть</button>
+                              </div>
+                            ) : executorTaskTopTab === "active" ? (
+                              <>
+                                <PipelineView task={task} compact />
+                                {executorActionButtonLabel(task.status) ? (
+                                  <button onClick={() => void handleExecutorStageAction(task)} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">
+                                    {executorActionButtonLabel(task.status)}
+                                  </button>
+                                ) : null}
+                              </>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {!isExecutorEditing ? (
+                      <div className="space-y-3">
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
+                        {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-8 flex items-start justify-between gap-4">
+                          <div>
+                            <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                            <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Редактирование анкеты</h2>
+                          </div>
+                          <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Отмена</button>
+                        </div>
+                        {renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                    <Briefcase className="h-5 w-5" />
+                    <span className="text-[10px] leading-none">Задачи</span>
+                  </button>
+                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                    <Trophy className="h-5 w-5" />
+                    <span className="text-[10px] leading-none">Профиль</span>
+                  </button>
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -1351,7 +1747,7 @@ export default function App() {
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
-                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)}</AnimatePresence></div>
+                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} onOpen={() => setSelectedTask(task)} />)}</AnimatePresence></div>
                     )}
                   </>
                 ) : activeBottomTab === "executors" ? (
@@ -1845,6 +2241,25 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+
+        {stageTaskId && stageKey ? (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 text-xl font-semibold text-white">
+                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
+              </div>
+              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
+              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
       </div>
     </div>
   );
