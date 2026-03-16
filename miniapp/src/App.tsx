@@ -11,10 +11,7 @@ import {
   Clock3,
   Archive,
   CircleDot,
-  Users,
-  CheckCircle2,
-  Circle,
-  Paperclip
+  Users
 } from "lucide-react";
 
 type Task = {
@@ -66,15 +63,10 @@ type ExecutorProfile = {
   portfolio?: string | null;
   paymentMethod?: string | null;
   paymentDetails?: any;
-  contractData?: any;
-  paymentInvoices?: Array<{ value?: string; createdAt?: string }>;
   unavailableDays?: string[];
   unavailableTime?: string | null;
   status?: string | null;
   approvedBy?: string | null;
-  reviewAccuracy?: number | null;
-  reviewSpeed?: number | null;
-  reviewAesthetics?: number | null;
   rating?: number | null;
   completedOrders?: number;
 };
@@ -146,87 +138,6 @@ function TaskCard({ task }: { task: Task }) {
   );
 }
 
-
-function getPaymentDetailsText(value: any) {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value?.value) return String(value.value);
-  return "";
-}
-
-function normalizeInvoiceList(value: any): Array<{ value: string; createdAt: string }> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => ({
-      value: typeof item?.value === "string" ? item.value : "",
-      createdAt: typeof item?.createdAt === "string" ? item.createdAt : new Date().toISOString()
-    }))
-    .filter((item) => item.value);
-}
-
-function formatDateLabel(value?: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("ru-RU");
-}
-
-function StageValue({ material }: { material?: { value?: string; createdAt?: string } | null }) {
-  if (!material?.value) return <span className="text-white/40">не загружено</span>;
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2 text-white/80">
-        <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#56FFEF]" />
-        <span className="truncate">{material.value}</span>
-      </div>
-      {material.createdAt ? <div className="mt-1 text-xs text-white/35">{formatDateLabel(material.createdAt)}</div> : null}
-    </div>
-  );
-}
-
-function TaskStageTimeline({ task }: { task: Task }) {
-  const materials = task.stageMaterials || {};
-  const steps = [
-    {
-      key: "tz",
-      title: "Изучил ТЗ",
-      done: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(task.status || ""),
-      render: <div className="text-sm text-white/45">{["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(task.status || "") ? "Шаг подтверждён исполнителем" : "не загружено"}</div>
-    },
-    { key: "30", title: "30%", done: Boolean(materials.thirty), render: <StageValue material={materials.thirty} /> },
-    { key: "60", title: "60%", done: Boolean(materials.sixty), render: <StageValue material={materials.sixty} /> },
-    {
-      key: "final",
-      title: "Финал",
-      done: Boolean(materials.final) || ["На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(task.status || ""),
-      render: <StageValue material={materials.final || null} />
-    }
-  ];
-
-  return (
-    <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
-      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">Этапы выполнения</div>
-      <div className="space-y-3">
-        {steps.map((step, index) => (
-          <div key={step.key} className="relative flex gap-3">
-            <div className="flex w-5 flex-col items-center">
-              {step.done ? <CheckCircle2 className="h-5 w-5 text-[#56FFEF]" /> : <Circle className="h-5 w-5 text-white/25" />}
-              {index !== steps.length - 1 ? <div className={cn("mt-1 w-px flex-1", step.done ? "bg-[#56FFEF]/40" : "bg-white/10")} /> : null}
-            </div>
-            <div className="min-w-0 flex-1 pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-medium text-white">{step.title}</div>
-                <div className={cn("text-xs", step.done ? "text-[#56FFEF]" : "text-white/40")}>{step.done ? "загружено" : "не загружено"}</div>
-              </div>
-              <div className="mt-1">{step.render}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome" | "managerPassword" | "managerApp" | "executorLoading" | "executorRegister" | "executorForm" | "executorCodeLogin" | "executorPending" | "executorApp"
@@ -265,14 +176,6 @@ export default function App() {
   const [createComment, setCreateComment] = useState("");
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
-
-  const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
-  const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
-  const [approvedExecutors, setApprovedExecutors] = useState<ExecutorProfile[]>([]);
-  const [isLoadingPendingExecutors, setIsLoadingPendingExecutors] = useState(false);
-  const [isLoadingApprovedExecutors, setIsLoadingApprovedExecutors] = useState(false);
-  const [pendingExecutorsError, setPendingExecutorsError] = useState("");
-  const [approvedExecutorsError, setApprovedExecutorsError] = useState("");
 
   useEffect(() => {
     const telegram = (window as any)?.Telegram?.WebApp;
@@ -326,50 +229,12 @@ export default function App() {
     });
   };
 
-  const loadPendingExecutors = async () => {
-    try {
-      setIsLoadingPendingExecutors(true);
-      setPendingExecutorsError("");
-      const response = await fetch(`${API_BASE}/api/executors/pending`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Failed to load pending executors");
-      setPendingExecutors(Array.isArray(data.executors) ? data.executors : []);
-    } catch (error) {
-      console.error(error);
-      setPendingExecutorsError("Не удалось загрузить заявки исполнителей");
-    } finally {
-      setIsLoadingPendingExecutors(false);
-    }
-  };
-
-  const loadApprovedExecutors = async () => {
-    try {
-      setIsLoadingApprovedExecutors(true);
-      setApprovedExecutorsError("");
-      const response = await fetch(`${API_BASE}/api/executors/approved`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Failed to load approved executors");
-      const list = Array.isArray(data.executors) ? data.executors : [];
-      list.sort((a: ExecutorProfile, b: ExecutorProfile) => Number(b.rating || 0) - Number(a.rating || 0));
-      setApprovedExecutors(list);
-    } catch (error) {
-      console.error(error);
-      setApprovedExecutorsError("Не удалось загрузить реестр исполнителей");
-    } finally {
-      setIsLoadingApprovedExecutors(false);
-    }
-  };
-
   useEffect(() => {
     if (screen === "managerApp") {
       void loadPublicTasks().catch(console.error);
       void loadManagerTasks().catch(console.error);
-      if (managerBottomTab === "executors") {
-        void loadPendingExecutors().catch(console.error);
-        void loadApprovedExecutors().catch(console.error);
-      }
     }
-  }, [screen, managerBottomTab]);
+  }, [screen]);
 
   useEffect(() => {
     if (screen === "executorApp") {
@@ -737,7 +602,6 @@ export default function App() {
                                   <div>Референсы: {task.refsText || "—"}</div>
                                   <div>Комментарий: {task.comment || "—"}</div>
                                 </div>
-                                <TaskStageTimeline task={task} />
                                 {executorActionButtonLabel(task.status) ? <button onClick={() => void handleExecutorStageAction(task)} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">{executorActionButtonLabel(task.status)}</button> : null}
                               </>
                             )}
@@ -768,14 +632,7 @@ export default function App() {
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
                     <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{managerBottomTab === "create" ? "Создать задачу" : managerBottomTab === "tasks" ? "Задачи" : managerBottomTab === "profile" ? "Профиль" : managerBottomTab === "executors" ? "Исполнители" : "Калькулятор"}</div>
                   </div>
-                  <button onClick={() => {
-                    void loadPublicTasks().catch(console.error);
-                    void loadManagerTasks().catch(console.error);
-                    if (managerBottomTab === "executors") {
-                      void loadPendingExecutors().catch(console.error);
-                      void loadApprovedExecutors().catch(console.error);
-                    }
-                  }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                  <button onClick={() => { void loadPublicTasks().catch(console.error); void loadManagerTasks().catch(console.error); }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
                 {managerBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
@@ -788,17 +645,6 @@ export default function App() {
                       const active = managerTaskTopTab === (tab.key as any);
                       return <button key={tab.key} onClick={() => setManagerTaskTopTab(tab.key as any)} className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}><Icon className="mb-2 h-4 w-4" /><div className="text-[12px] font-medium leading-4">{tab.label}</div></button>;
                     })}
-                  </div>
-                )}
-
-                {managerBottomTab === "executors" && (
-                  <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
-                    <button onClick={() => setManagerExecutorsTopTab("pending")} className={cn("rounded-[18px] px-3 py-3 text-left transition", managerExecutorsTopTab === "pending" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                      <div className="text-[12px] font-medium leading-4">Заявки</div>
-                    </button>
-                    <button onClick={() => setManagerExecutorsTopTab("registry")} className={cn("rounded-[18px] px-3 py-3 text-left transition", managerExecutorsTopTab === "registry" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                      <div className="text-[12px] font-medium leading-4">Реестр</div>
-                    </button>
                   </div>
                 )}
               </div>
@@ -824,8 +670,7 @@ export default function App() {
                             </div>
                           ) : null}
                           {managerTaskTopTab === "active" ? (
-                            <div className="mt-4 space-y-3">
-                              <TaskStageTimeline task={managerTask} />
+                            <div className="mt-4 space-y-2">
                               <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять результат</button>
                               <button onClick={() => void handleManagerStageAction(task.id, "fixes")} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отправить на правки</button>
                               <div className="grid grid-cols-2 gap-2">
@@ -863,7 +708,145 @@ export default function App() {
                     <button onClick={() => void handleCreateTask()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Создать задачу</button>
                   </div>
                 ) : (
-                  <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Остальные менеджерские разделы оставь из текущей рабочей версии. Этот файл добавляет этапы задач.</div>
+                  <>
+                      {managerExecutorsTopTab === "pending" ? (
+                        isLoadingPendingExecutors ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                            Загружаю заявки исполнителей...
+                          </div>
+                        ) : pendingExecutorsError ? (
+                          <div className="space-y-3">
+                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                              {pendingExecutorsError}
+                            </div>
+                            <button
+                              onClick={() => void loadPendingExecutors()}
+                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                            >
+                              Повторить загрузку
+                            </button>
+                          </div>
+                        ) : !pendingExecutors.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            Сейчас нет новых анкет на модерации.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {pendingExecutors.map((profile) => (
+                              <div
+                                key={String(profile.telegramId)}
+                                className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"
+                              >
+                                <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                  На модерации
+                                </div>
+                                <div className="text-lg font-semibold text-white">
+                                  {profile.fullName || "Без имени"}
+                                </div>
+                                <div className="mt-2 text-sm text-white/55">
+                                  ID: {profile.executorCode || "—"}
+                                </div>
+                                <div className="mt-1 text-sm text-white/55">
+                                  Контакт: {profile.telegramContact || "—"}
+                                </div>
+                                <div className="mt-1 text-sm text-white/55">
+                                  Специализации: {(profile.specializations || []).join(", ") || "—"}
+                                </div>
+                                <div className="mt-1 text-sm text-white/55">
+                                  Портфолио: {profile.portfolio || "—"}
+                                </div>
+                                <div className="mt-1 text-sm text-white/55">
+                                  Способ оплаты: {profile.paymentMethod || "—"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      ) : (
+                        isLoadingApprovedExecutors ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                            Загружаю реестр исполнителей...
+                          </div>
+                        ) : approvedExecutorsError ? (
+                          <div className="space-y-3">
+                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                              {approvedExecutorsError}
+                            </div>
+                            <button
+                              onClick={() => void loadApprovedExecutors()}
+                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                            >
+                              Повторить загрузку
+                            </button>
+                          </div>
+                        ) : !approvedExecutors.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            В реестре пока нет исполнителей.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {approvedExecutors.map((profile, index) => (
+                              <div
+                                key={String(profile.telegramId)}
+                                className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"
+                              >
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                      Место #{index + 1}
+                                    </div>
+                                    <div className="text-xl font-semibold text-white">
+                                      {profile.fullName || "Без имени"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-sm text-[#56FFEF]">
+                                    {profile.rating || 0} pts
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+                                      ID исполнителя
+                                    </div>
+                                    <div>{profile.executorCode || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+                                      Контакт
+                                    </div>
+                                    <div>{profile.telegramContact || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+                                      Специализации
+                                    </div>
+                                    <div>{(profile.verifiedSpecializations || profile.specializations || []).join(", ") || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
+                                      Заказов
+                                    </div>
+                                    <div>{profile.completedOrders || 0}</div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 space-y-1 text-sm text-white/55">
+                                  <div>Подтвердил: {profile.approvedBy || "—"}</div>
+                                  <div>Портфолио: {profile.portfolio || "—"}</div>
+                                  <div>Способ оплаты: {profile.paymentMethod || "—"}</div>
+                                  <div>Реквизиты: {getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
+                                  <div>Недоступные дни: {(profile.unavailableDays || []).join(", ") || "—"}</div>
+                                  <div>Недоступное время: {profile.unavailableTime || "—"}</div>
+                                  <div>Оценки: ТЗ {profile.reviewAccuracy ?? "—"} · Сроки {profile.reviewSpeed ?? "—"} · Эстетика {profile.reviewAesthetics ?? "—"}</div>
+                                  <div>Договор: {getPaymentDetailsText(profile.contractData) || "—"}</div>
+                                  <div>Счетов на оплату: {normalizeInvoiceList(profile.paymentInvoices).length}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      )}</>
                 )}
               </div>
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
