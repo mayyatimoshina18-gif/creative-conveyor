@@ -393,7 +393,12 @@ async function loadTasksFromDb() {
       stageMaterials: row.stage_materials || {
         thirty: null,
         sixty: null,
-        final: null
+        final: null,
+        fixesNote: null,
+        fixesHistory: [],
+        thirtyHistory: [],
+        sixtyHistory: [],
+        finalHistory: []
       },
       timeline: row.timeline || {
         assignedAt: null,
@@ -1168,6 +1173,7 @@ function mapTaskForMiniapp(task) {
     briefText: task.brief?.type === "text" ? task.brief.value : task.brief?.caption || "",
     sourcesText: task.sources?.type === "text" ? task.sources.value : task.sources?.caption || "",
     refsText: task.refs_data?.type === "text" ? task.refs_data.value : task.refs_data?.caption || "",
+    deliveryTarget: task.deliveryTarget || "",
     stageMaterials: task.stageMaterials || {}
   };
 }
@@ -3345,7 +3351,12 @@ comment,
               stageMaterials: {
                 thirty: null,
                 sixty: null,
-                final: null
+                final: null,
+                fixesNote: null,
+                fixesHistory: [],
+                thirtyHistory: [],
+                sixtyHistory: [],
+                finalHistory: []
               },
               timeline: {
                 assignedAt: null,
@@ -3513,16 +3524,24 @@ comment,
           const value = String(payload.value || "").trim();
           if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
           const field = { type: "text", value, createdAt: new Date().toISOString() };
+          task.stageMaterials = task.stageMaterials || {};
+          if (!Array.isArray(task.stageMaterials.thirtyHistory)) task.stageMaterials.thirtyHistory = [];
+          if (!Array.isArray(task.stageMaterials.sixtyHistory)) task.stageMaterials.sixtyHistory = [];
+          if (!Array.isArray(task.stageMaterials.finalHistory)) task.stageMaterials.finalHistory = [];
+
           if (stageKey === "30" && task.status === "В работе") {
             task.stageMaterials.thirty = field;
+            task.stageMaterials.thirtyHistory.push(field);
             task.status = "30%";
             task.timeline.shown30At = new Date().toISOString();
           } else if (stageKey === "60" && task.status === "30%") {
             task.stageMaterials.sixty = field;
+            task.stageMaterials.sixtyHistory.push(field);
             task.status = "60%";
             task.timeline.shown60At = new Date().toISOString();
           } else if (stageKey === "final" && ["60%", "Правки"].includes(task.status)) {
             task.stageMaterials.final = field;
+            task.stageMaterials.finalHistory.push(field);
             task.status = "На проверке";
             task.timeline.submittedAt = new Date().toISOString();
           } else {
@@ -3613,7 +3632,9 @@ comment,
           } else if (payload.action === "fixes") {
             task.status = "Правки";
             task.stageMaterials = task.stageMaterials || {};
+            if (!Array.isArray(task.stageMaterials.fixesHistory)) task.stageMaterials.fixesHistory = [];
             task.stageMaterials.fixesNote = { value: String(payload.note || "").trim(), createdAt: new Date().toISOString() };
+            task.stageMaterials.fixesHistory.push(task.stageMaterials.fixesNote);
             task.timeline.returnedForFixesAt = new Date().toISOString();
             task.timeline.revisionCount = Number(task.timeline.revisionCount || 0) + 1;
             const executor = executors.get(task.assignedExecutorId);
