@@ -3450,6 +3450,19 @@ comment,
             executors.set(executor.telegramId, executor);
             await saveTaskToDb(task);
           }
+          if (decision === "Принял") {
+            const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
+            if (managerChatId) {
+              sendMessage(
+                managerChatId,
+                `Новый отклик на задачу #${task.id}.
+
+${response.executorName}
+${response.executorContact}`,
+                getMainKeyboard(true)
+              );
+            }
+          }
           sendJson(res, 200, { ok: true });
         } catch (error) {
           console.error(error);
@@ -3474,6 +3487,18 @@ comment,
           task.status = "Назначена";
           task.timeline.assignedAt = new Date().toISOString();
           await saveTaskToDb(task);
+
+          if (executor.telegramId) {
+            sendMessage(
+              executor.telegramId,
+              `Ты назначен на задачу #${task.id}.
+
+${task.title}`,
+              getExecutorTaskActionKeyboard(task)
+            );
+            notifyTaskMaterials(executor.telegramId, task);
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
@@ -3503,6 +3528,16 @@ comment,
             return sendJson(res, 400, { error: "Invalid action" });
           }
           await saveTaskToDb(task);
+
+          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
+          if (managerChatId) {
+            sendMessage(
+              managerChatId,
+              `Обновление по задаче #${task.id}: исполнитель отметил этап «${action}».`,
+              getMainKeyboard(true)
+            );
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
@@ -3548,6 +3583,17 @@ comment,
             return sendJson(res, 400, { error: "Invalid stage action" });
           }
           await saveTaskToDb(task);
+
+          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
+          if (managerChatId) {
+            const stageLabel = stageKey === "30" ? "30%" : stageKey === "60" ? "60%" : "финал";
+            sendMessage(
+              managerChatId,
+              `Исполнитель загрузил этап ${stageLabel} по задаче #${task.id}.`,
+              getMainKeyboard(true)
+            );
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
@@ -3574,6 +3620,16 @@ comment,
           task.status = "Счёт загружен";
           task.timeline.invoiceSubmittedAt = new Date().toISOString();
           await saveTaskToDb(task);
+
+          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
+          if (managerChatId) {
+            sendMessage(
+              managerChatId,
+              `Исполнитель загрузил счёт по задаче #${task.id}.`,
+              getMainKeyboard(true)
+            );
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
@@ -3596,6 +3652,16 @@ comment,
           task.status = "Оплачена";
           task.timeline.paymentConfirmedAt = new Date().toISOString();
           await saveTaskToDb(task);
+
+          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
+          if (managerChatId) {
+            sendMessage(
+              managerChatId,
+              `Исполнитель подтвердил оплату по задаче #${task.id}. Задача завершена.`,
+              getMainKeyboard(true)
+            );
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
@@ -3657,6 +3723,48 @@ comment,
             return sendJson(res, 400, { error: "Unknown action" });
           }
           await saveTaskToDb(task);
+
+          const executorChatId = task.assignedExecutorId || null;
+          if (executorChatId) {
+            if (payload.action === "approve") {
+              if (task.status === "Ожидает счёт") {
+                sendMessage(
+                  executorChatId,
+                  `Задача #${task.id} принята. Теперь нужно загрузить счёт на оплату.`,
+                  getMainKeyboard(false, true)
+                );
+              } else {
+                sendMessage(
+                  executorChatId,
+                  `Задача #${task.id} принята менеджером.`,
+                  getMainKeyboard(false, true)
+                );
+              }
+            } else if (payload.action === "fixes") {
+              sendMessage(
+                executorChatId,
+                `Задача #${task.id} отправлена на правки.
+
+${String(payload.note || "").trim() || "Открой задачу, чтобы посмотреть замечания."}`,
+                getMainKeyboard(false, true)
+              );
+            } else if (payload.action === "paid") {
+              if (task.status === "Ожидает подтверждения оплаты") {
+                sendMessage(
+                  executorChatId,
+                  `По задаче #${task.id} менеджер отметил оплату. Подтверди получение оплаты в приложении.`,
+                  getMainKeyboard(false, true)
+                );
+              } else {
+                sendMessage(
+                  executorChatId,
+                  `По задаче #${task.id} счёт оплачен.`,
+                  getMainKeyboard(false, true)
+                );
+              }
+            }
+          }
+
           sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
           console.error(error);
