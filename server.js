@@ -125,6 +125,7 @@ async function initDb() {
       payment_details JSONB,
       payment_file JSONB,
       contract_data JSONB,
+      payment_invoices JSONB NOT NULL DEFAULT '[]'::jsonb,
       unavailable_days JSONB NOT NULL DEFAULT '[]'::jsonb,
       unavailable_time TEXT,
       status TEXT,
@@ -155,6 +156,11 @@ async function initDb() {
   await runQuery(`
     ALTER TABLE executors
     ADD COLUMN IF NOT EXISTS contract_data JSONB
+  `);
+
+  await runQuery(`
+    ALTER TABLE executors
+    ADD COLUMN IF NOT EXISTS payment_invoices JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
 
   await runQuery(`
@@ -309,6 +315,7 @@ async function loadExecutorsFromDb() {
       paymentDetails: row.payment_details,
       paymentFile: row.payment_file,
       contractData: row.contract_data,
+      paymentInvoices: row.payment_invoices || [],
       unavailableDays: row.unavailable_days || [],
       unavailableTime: row.unavailable_time || "",
       status: row.status,
@@ -437,6 +444,7 @@ async function saveExecutorToDb(profile) {
       payment_details,
       payment_file,
       contract_data,
+      payment_invoices,
       unavailable_days,
       unavailable_time,
       status,
@@ -455,8 +463,8 @@ async function saveExecutorToDb(profile) {
     )
     VALUES (
       $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb,
-      $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-      $25::jsonb, $26, NOW()
+      $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
+      $26::jsonb, $27, NOW()
     )
     ON CONFLICT (telegram_id)
     DO UPDATE SET
@@ -471,6 +479,7 @@ async function saveExecutorToDb(profile) {
       payment_details = EXCLUDED.payment_details,
       payment_file = EXCLUDED.payment_file,
       contract_data = EXCLUDED.contract_data,
+      payment_invoices = EXCLUDED.payment_invoices,
       unavailable_days = EXCLUDED.unavailable_days,
       unavailable_time = EXCLUDED.unavailable_time,
       status = EXCLUDED.status,
@@ -498,6 +507,7 @@ async function saveExecutorToDb(profile) {
     profile.paymentDetails ? JSON.stringify(profile.paymentDetails) : null,
     profile.paymentFile ? JSON.stringify(profile.paymentFile) : null,
     profile.contractData ? JSON.stringify(profile.contractData) : null,
+    JSON.stringify(profile.paymentInvoices || []),
     JSON.stringify(profile.unavailableDays || []),
     profile.unavailableTime || "",
     profile.status || null,
@@ -1083,6 +1093,7 @@ function serializeExecutorProfile(profile) {
     paymentMethod: profile.paymentMethod || null,
     paymentDetails: profile.paymentDetails || null,
     contractData: profile.contractData || null,
+    paymentInvoices: profile.paymentInvoices || [],
     unavailableDays: profile.unavailableDays || [],
     unavailableTime: profile.unavailableTime || "",
     status: profile.status || null,
@@ -3208,6 +3219,14 @@ async function bootstrap() {
             profile.contractData = payload.contractData
               ? { type: "text", value: String(payload.contractData).trim() }
               : null;
+            profile.paymentInvoices = Array.isArray(payload.paymentInvoices)
+              ? payload.paymentInvoices
+                  .map(item => ({
+                    value: String(item?.value || '').trim(),
+                    createdAt: item?.createdAt ? String(item.createdAt) : new Date().toISOString()
+                  }))
+                  .filter(item => item.value)
+              : [];
             profile.unavailableDays = Array.isArray(payload.unavailableDays)
               ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
               : [];
