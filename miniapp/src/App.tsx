@@ -374,17 +374,25 @@ function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => 
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнитель</div><div>{task.assignedExecutorName || "—"}</div></div>
         </div>
 
-        <div className="mt-4 space-y-3 text-sm text-white/75">
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ТЗ</div><div className="whitespace-pre-wrap break-words">{task.briefText || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Источники</div><div className="whitespace-pre-wrap break-words">{task.sourcesText || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div className="whitespace-pre-wrap break-words">{task.refsText || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div className="whitespace-pre-wrap break-words">{task.comment || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Правки менеджера</div><div className="whitespace-pre-wrap break-words">{task.stageMaterials?.fixesNote?.value || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div className="whitespace-pre-wrap break-words">{task.stageMaterials?.invoice?.value || "—"}</div></div>
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ТЗ</div><div><RenderTextOrLink value={task.briefText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Источники</div><div><RenderTextOrLink value={task.sourcesText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div><RenderTextOrLink value={task.refsText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div><RenderTextOrLink value={task.comment || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Куда отгружать</div><div><RenderTextOrLink value={task.deliveryTarget || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние правки менеджера</div><div><RenderTextOrLink value={task.stageMaterials?.fixesNote?.value || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div><RenderTextOrLink value={task.stageMaterials?.invoice?.value || "—"} /></div></div>
         </div>
 
         <div className="mt-4">
           <PipelineView task={task} />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <HistoryList title="История правок" items={task.stageMaterials?.fixesHistory || (task.stageMaterials?.fixesNote ? [task.stageMaterials.fixesNote] : [])} />
+          <HistoryList title="История сдач 30%" items={task.stageMaterials?.thirtyHistory || (task.stageMaterials?.thirty ? [task.stageMaterials.thirty] : [])} />
+          <HistoryList title="История сдач 60%" items={task.stageMaterials?.sixtyHistory || (task.stageMaterials?.sixty ? [task.stageMaterials.sixty] : [])} />
+          <HistoryList title="История финальных сдач" items={task.stageMaterials?.finalHistory || (task.stageMaterials?.final ? [task.stageMaterials.final] : [])} />
         </div>
 
         {task.status === "На проверке" ? (
@@ -2345,3 +2353,57 @@ export default function App() {
     </div>
   );
 }
+
+function looksLikeUrl(value?: string | null) {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return /^(https?:\/\/|www\.|t\.me\/|telegram\.me\/)/i.test(trimmed);
+}
+
+function normalizeUrl(value?: string | null) {
+  if (!value) return "#";
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function RenderTextOrLink({ value }: { value?: string | null }) {
+  if (!value) return <span className="whitespace-pre-wrap break-words">—</span>;
+  if (looksLikeUrl(value)) {
+    const href = normalizeUrl(value);
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className="break-all text-[#56FFEF] underline underline-offset-4">
+        {value}
+      </a>
+    );
+  }
+  return <span className="whitespace-pre-wrap break-words">{value}</span>;
+}
+
+function HistoryList({
+  title,
+  items
+}: {
+  title: string;
+  items?: Array<{ value?: string; createdAt?: string }> | null;
+}) {
+  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
+  return (
+    <div className="rounded-2xl bg-black/20 p-3">
+      <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">{title}</div>
+      {!normalized.length ? (
+        <div className="text-white/45">—</div>
+      ) : (
+        <div className="space-y-3">
+          {normalized.map((item, index) => (
+            <div key={`${title}-${index}`} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+              <div className="mb-1 text-xs text-white/35">{formatDateLabel(item.createdAt)}</div>
+              <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
