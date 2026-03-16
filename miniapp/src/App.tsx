@@ -74,6 +74,8 @@ type ExecutorProfile = {
 const API_BASE = "https://creative-conveyor-backend.onrender.com";
 
 const SPECIALIZATION_OPTIONS = ["Статика", "Моушен", "Лендинги"];
+const DAY_OPTIONS = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"];
+const PAYMENT_OPTIONS = ["Переводом", "ИП", "Самозанятость"];
 
 const managerBottomTabs = [
   { key: "executors", label: "Исполнители", icon: Users },
@@ -138,6 +140,62 @@ function TaskCard({ task }: { task: Task }) {
   );
 }
 
+
+function currentTaskStageLabel(status?: string | null) {
+  const map: Record<string, string> = {
+    "Ждёт исполнителя": "Ожидает откликов",
+    "Есть отклики": "Есть отклики",
+    "Назначена": "Назначена",
+    "ТЗ изучено": "ТЗ изучено",
+    "В работе": "В работе",
+    "30%": "Этап 30%",
+    "60%": "Этап 60%",
+    "На проверке": "На проверке",
+    "Правки": "Правки",
+    "Выполнена": "Выполнена",
+    "Не оплачена": "Не оплачена",
+    "Оплачена": "Оплачена"
+  };
+  return map[status || ""] || (status || "—");
+}
+
+function TaskPreviewCard({ task, onOpen }: { task: Task; onOpen?: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full rounded-[28px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+          <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+        </div>
+        <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-xs text-[#56FFEF]">
+          {currentTaskStageLabel(task.status)}
+        </div>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {(task.type || []).map((item) => (
+          <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+            {item}
+          </span>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+        <div className="rounded-2xl bg-black/20 p-3">
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
+          <div>{task.deadline || "—"}</div>
+        </div>
+        <div className="rounded-2xl bg-black/20 p-3">
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
+          <div>{task.price || "—"}</div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome" | "managerPassword" | "managerApp" | "executorLoading" | "executorRegister" | "executorForm" | "executorCodeLogin" | "executorPending" | "executorApp"
@@ -157,6 +215,11 @@ export default function App() {
   const [executor, setExecutor] = useState<ExecutorProfile | null>(null);
   const [executorCode, setExecutorCode] = useState("");
   const [executorError, setExecutorError] = useState("");
+  const [isExecutorEditingProfile, setIsExecutorEditingProfile] = useState(false);
+  const [executorProfileMessage, setExecutorProfileMessage] = useState("");
+  const [executorProfileError, setExecutorProfileError] = useState("");
+  const [isSavingExecutorProfile, setIsSavingExecutorProfile] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
   const [stageKey, setStageKey] = useState<"30" | "60" | "final" | null>(null);
@@ -183,6 +246,31 @@ export default function App() {
     const username = telegram?.initDataUnsafe?.user?.username;
     if (username) setCreateManagerContact(`@${username}`);
   }, []);
+
+  const fillExecutorProfileForm = (profile: ExecutorProfile | null) => {
+    if (!profile) return;
+    setExecutorFullName(profile.fullName || "");
+    setExecutorContact(profile.telegramContact || "");
+    setExecutorSpecializations(profile.specializations || []);
+    setExecutorPortfolio(profile.portfolio || "");
+    setExecutorPaymentMethod(profile.paymentMethod || "");
+    setExecutorPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
+    setExecutorUnavailableDays(profile.unavailableDays || []);
+    setExecutorUnavailableTime(profile.unavailableTime || "");
+  };
+
+  const toggleExecutorSpecialization = (value: string) => {
+    setExecutorSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleExecutorDay = (value: string) => {
+    setExecutorUnavailableDays((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
 
   const visibleManagerTasks = useMemo(() => {
     if (managerTaskTopTab === "waiting") return tasksData.waiting;
@@ -273,6 +361,7 @@ export default function App() {
         return;
       }
       setExecutor(data.executor);
+      fillExecutorProfileForm(data.executor);
       if (data.executor.status === "На модерации") setScreen("executorPending");
       else if (data.executor.status === "Подтверждён") setScreen("executorApp");
       else setScreen("executorRegister");
@@ -289,6 +378,45 @@ export default function App() {
     }
     setPasswordError("");
     setScreen("managerApp");
+  };
+
+  const handleSaveExecutorProfile = async () => {
+    if (!executor?.telegramId) return;
+    if (!executorFullName.trim() || !executorContact.trim() || !executorPaymentMethod.trim() || !executorPaymentDetails.trim() || !executorSpecializations.length) {
+      setExecutorProfileError("Заполни обязательные поля");
+      return;
+    }
+    try {
+      setIsSavingExecutorProfile(true);
+      setExecutorProfileError("");
+      setExecutorProfileMessage("");
+      const response = await fetch(`${API_BASE}/api/executors/update-profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telegramId: executor.telegramId,
+          fullName: executorFullName.trim(),
+          telegramContact: executorContact.trim(),
+          specializations: executorSpecializations,
+          portfolio: executorPortfolio.trim() || null,
+          paymentMethod: executorPaymentMethod.trim(),
+          paymentDetails: executorPaymentDetails.trim(),
+          unavailableDays: executorUnavailableDays,
+          unavailableTime: executorUnavailableTime.trim() || ""
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Failed to update profile");
+      setExecutor(data.executor);
+      fillExecutorProfileForm(data.executor);
+      setIsExecutorEditingProfile(false);
+      setExecutorProfileMessage(data.requiresModeration ? "Изменения отправлены менеджеру на подтверждение." : "Профиль обновлён.");
+    } catch (error) {
+      console.error(error);
+      setExecutorProfileError("Не удалось сохранить профиль");
+    } finally {
+      setIsSavingExecutorProfile(false);
+    }
   };
 
   const handleCreateTask = async () => {
@@ -362,6 +490,7 @@ export default function App() {
         return;
       }
       setExecutor(data.executor);
+      fillExecutorProfileForm(data.executor);
       if (data.executor.status === "На модерации") setScreen("executorPending");
       else setScreen("executorApp");
     } catch (error) {
@@ -577,15 +706,133 @@ export default function App() {
               <div className="flex-1 px-5 pb-28 pt-4">
                 {executorBottomTab === "profile" ? (
                   <div className="space-y-3">
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div>{executor?.executorCode || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div>{executor?.telegramContact || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div>{executor?.status || "—"}</div></div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm text-white/45">Полный профиль исполнителя</div>
+                      <button
+                        onClick={() => {
+                          fillExecutorProfileForm(executor);
+                          setExecutorProfileMessage("");
+                          setExecutorProfileError("");
+                          setIsExecutorEditingProfile((prev) => !prev);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white"
+                      >
+                        <Pencil className="h-4 w-4" />
+                        {isExecutorEditingProfile ? "Закрыть" : "Редактировать"}
+                      </button>
+                    </div>
+
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div>
+                      <div>{executor?.executorCode || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя</div>
+                      <div>{executor?.fullName || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div>
+                      <div>{executor?.telegramContact || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div>
+                      <div>{executor?.status || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div>
+                      <div>{(executor?.specializations || []).join(", ") || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div>
+                      <div>{(executor?.verifiedSpecializations || []).join(", ") || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+                      <div>{executor?.portfolio || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ оплаты</div>
+                      <div>{executor?.paymentMethod || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
+                      <div>{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
+                      <div>{(executor?.unavailableDays || []).join(", ") || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступное время</div>
+                      <div>{executor?.unavailableTime || "—"}</div>
+                    </div>
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Рейтинг</div>
+                      <div>{executor?.rating ?? "—"}</div>
+                    </div>
+
+                    {executorProfileMessage ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorProfileMessage}</div> : null}
+                    {executorProfileError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorProfileError}</div> : null}
+
+                    {isExecutorEditingProfile ? (
+                      <div className="space-y-3 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                        <div className="text-sm text-white/55">Если изменить имя, контакт или специализации, обновление уйдёт менеджеру на подтверждение.</div>
+                        <FormInput value={executorFullName} onChange={(e) => setExecutorFullName(e.target.value)} placeholder="Имя и фамилия" />
+                        <FormInput value={executorContact} onChange={(e) => setExecutorContact(e.target.value)} placeholder="Контакт Telegram" />
+
+                        <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
+                          <div className="mb-3 text-sm text-white/55">Специализации</div>
+                          <div className="flex flex-wrap gap-2">
+                            {SPECIALIZATION_OPTIONS.map((item) => {
+                              const active = executorSpecializations.includes(item);
+                              return (
+                                <button key={item} type="button" onClick={() => toggleExecutorSpecialization(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>
+                                  {item}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <FormInput value={executorPortfolio} onChange={(e) => setExecutorPortfolio(e.target.value)} placeholder="Портфолио" />
+
+                        <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
+                          <div className="mb-3 text-sm text-white/55">Способ оплаты</div>
+                          <div className="flex flex-wrap gap-2">
+                            {PAYMENT_OPTIONS.map((item) => (
+                              <button key={item} type="button" onClick={() => setExecutorPaymentMethod(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", executorPaymentMethod === item ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <FormTextarea value={executorPaymentDetails} onChange={(e) => setExecutorPaymentDetails(e.target.value)} placeholder="Реквизиты" />
+
+                        <div className="rounded-[24px] border border-white/8 bg-black/20 p-4">
+                          <div className="mb-3 text-sm text-white/55">Недоступные дни</div>
+                          <div className="flex flex-wrap gap-2">
+                            {DAY_OPTIONS.map((item) => (
+                              <button key={item} type="button" onClick={() => toggleExecutorDay(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", executorUnavailableDays.includes(item) ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>
+                                {item}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <FormTextarea value={executorUnavailableTime} onChange={(e) => setExecutorUnavailableTime(e.target.value)} placeholder="Недоступное время" />
+
+                        <button onClick={() => void handleSaveExecutorProfile()} disabled={isSavingExecutorProfile} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">
+                          {isSavingExecutorProfile ? "Сохраняю..." : "Сохранить изменения"}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {visibleExecutorTasks.length === 0 ? <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div> : visibleExecutorTasks.map((task) => (
                       <div key={task.id} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                        <TaskCard task={task} />
+                        <TaskPreviewCard task={task} onOpen={() => setSelectedTask(task)} />
                         {executorTaskTopTab !== "archived" && (
                           <div className="mt-4 space-y-3">
                             {executorTaskTopTab === "new" ? (
@@ -655,7 +902,7 @@ export default function App() {
                       const managerTask = managerTasks.find((item) => item.id === task.id) || task;
                       return (
                         <div key={task.id} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                          <TaskCard task={task} />
+                          <TaskPreviewCard task={task} onOpen={() => setSelectedTask(task)} />
                           {managerTask.responses && managerTask.responses.length > 0 ? (
                             <div className="mt-4 space-y-3">
                               <div className="text-sm text-white/60">Отклики: {managerTask.responses.length}</div>
@@ -708,145 +955,7 @@ export default function App() {
                     <button onClick={() => void handleCreateTask()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Создать задачу</button>
                   </div>
                 ) : (
-                  <>
-                      {managerExecutorsTopTab === "pending" ? (
-                        isLoadingPendingExecutors ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
-                            Загружаю заявки исполнителей...
-                          </div>
-                        ) : pendingExecutorsError ? (
-                          <div className="space-y-3">
-                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                              {pendingExecutorsError}
-                            </div>
-                            <button
-                              onClick={() => void loadPendingExecutors()}
-                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-                            >
-                              Повторить загрузку
-                            </button>
-                          </div>
-                        ) : !pendingExecutors.length ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
-                            Сейчас нет новых анкет на модерации.
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {pendingExecutors.map((profile) => (
-                              <div
-                                key={String(profile.telegramId)}
-                                className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"
-                              >
-                                <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                                  На модерации
-                                </div>
-                                <div className="text-lg font-semibold text-white">
-                                  {profile.fullName || "Без имени"}
-                                </div>
-                                <div className="mt-2 text-sm text-white/55">
-                                  ID: {profile.executorCode || "—"}
-                                </div>
-                                <div className="mt-1 text-sm text-white/55">
-                                  Контакт: {profile.telegramContact || "—"}
-                                </div>
-                                <div className="mt-1 text-sm text-white/55">
-                                  Специализации: {(profile.specializations || []).join(", ") || "—"}
-                                </div>
-                                <div className="mt-1 text-sm text-white/55">
-                                  Портфолио: {profile.portfolio || "—"}
-                                </div>
-                                <div className="mt-1 text-sm text-white/55">
-                                  Способ оплаты: {profile.paymentMethod || "—"}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      ) : (
-                        isLoadingApprovedExecutors ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
-                            Загружаю реестр исполнителей...
-                          </div>
-                        ) : approvedExecutorsError ? (
-                          <div className="space-y-3">
-                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
-                              {approvedExecutorsError}
-                            </div>
-                            <button
-                              onClick={() => void loadApprovedExecutors()}
-                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-                            >
-                              Повторить загрузку
-                            </button>
-                          </div>
-                        ) : !approvedExecutors.length ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
-                            В реестре пока нет исполнителей.
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {approvedExecutors.map((profile, index) => (
-                              <div
-                                key={String(profile.telegramId)}
-                                className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"
-                              >
-                                <div className="mb-3 flex items-start justify-between gap-3">
-                                  <div>
-                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
-                                      Место #{index + 1}
-                                    </div>
-                                    <div className="text-xl font-semibold text-white">
-                                      {profile.fullName || "Без имени"}
-                                    </div>
-                                  </div>
-                                  <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-sm text-[#56FFEF]">
-                                    {profile.rating || 0} pts
-                                  </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-                                      ID исполнителя
-                                    </div>
-                                    <div>{profile.executorCode || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-                                      Контакт
-                                    </div>
-                                    <div>{profile.telegramContact || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-                                      Специализации
-                                    </div>
-                                    <div>{(profile.verifiedSpecializations || profile.specializations || []).join(", ") || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">
-                                      Заказов
-                                    </div>
-                                    <div>{profile.completedOrders || 0}</div>
-                                  </div>
-                                </div>
-
-                                <div className="mt-3 space-y-1 text-sm text-white/55">
-                                  <div>Подтвердил: {profile.approvedBy || "—"}</div>
-                                  <div>Портфолио: {profile.portfolio || "—"}</div>
-                                  <div>Способ оплаты: {profile.paymentMethod || "—"}</div>
-                                  <div>Реквизиты: {getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
-                                  <div>Недоступные дни: {(profile.unavailableDays || []).join(", ") || "—"}</div>
-                                  <div>Недоступное время: {profile.unavailableTime || "—"}</div>
-                                  <div>Оценки: ТЗ {profile.reviewAccuracy ?? "—"} · Сроки {profile.reviewSpeed ?? "—"} · Эстетика {profile.reviewAesthetics ?? "—"}</div>
-                                  <div>Договор: {getPaymentDetailsText(profile.contractData) || "—"}</div>
-                                  <div>Счетов на оплату: {normalizeInvoiceList(profile.paymentInvoices).length}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      )}</>
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Остальные менеджерские разделы оставь из текущей рабочей версии. Этот файл добавляет этапы задач.</div>
                 )}
               </div>
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
@@ -862,7 +971,36 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {stageTaskId && stageKey ? (
+        
+        {selectedTask ? (
+          <div className="fixed inset-0 z-40 flex items-end bg-black/60 p-4">
+            <div className="max-h-[88vh] w-full overflow-auto rounded-[28px] border border-white/10 bg-[#0b0b10] p-4">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-white/35">Подробности задачи</div>
+                  <div className="text-xl font-semibold text-white">{selectedTask.title}</div>
+                </div>
+                <button onClick={() => setSelectedTask(null)} className="rounded-2xl border border-white/10 bg-white/5 p-2 text-white/70">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <TaskPreviewCard task={selectedTask} />
+              <div className="mt-4 space-y-3">
+                <div className="rounded-[24px] border border-white/8 bg-black/20 p-4 text-sm text-white/75">
+                  <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Материалы задачи</div>
+                  <div>ТЗ: {selectedTask.briefText || "—"}</div>
+                  <div>Источники: {selectedTask.sourcesText || "—"}</div>
+                  <div>Референсы: {selectedTask.refsText || "—"}</div>
+                  <div>Комментарий: {selectedTask.comment || "—"}</div>
+                </div>
+                <TaskStageTimeline task={selectedTask} />
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+{stageTaskId && stageKey ? (
           <div className="fixed inset-0 z-50 flex items-end bg-black/60 p-4">
             <div className="w-full rounded-[28px] border border-white/10 bg-[#0b0b10] p-4">
               <div className="mb-3 text-lg font-semibold text-white">{stageKey === "30" ? "Отправить 30%" : stageKey === "60" ? "Отправить 60%" : "Сдать задачу"}</div>
