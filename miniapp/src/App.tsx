@@ -374,7 +374,7 @@ export default function App() {
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
 
   const executorNewTasks = useMemo(
-    () => executorAvailableTasks,
+    () => executorAvailableTasks.filter((task) => !task.myDecision),
     [executorAvailableTasks]
   );
 
@@ -1611,7 +1611,7 @@ export default function App() {
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
                     <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : "Задачи"}</div>
                   </div>
-                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); void loadManagerTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
                 {activeBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
@@ -1655,14 +1655,84 @@ export default function App() {
                 {activeBottomTab === "tasks" ? (
                   <>
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
-                    {isLoadingTasks ? (
+                    {isLoadingTasks || isLoadingManagerTasks ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
-                    ) : tasksError ? (
-                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => void loadTasks()} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
-                    ) : visibleTasks.length === 0 ? (
+                    ) : tasksError || managerTasksError ? (
+                      <div className="space-y-3">
+                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError || managerTasksError}</div>
+                        <button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button>
+                      </div>
+                    ) : managerTasks.filter((task) => {
+                      if (activeTopTab === "waiting") return ["Ждёт исполнителя", "Есть отклики", "Создана"].includes(String(task.status || ""));
+                      if (activeTopTab === "active") return ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Не оплачена"].includes(String(task.status || ""));
+                      return ["Выполнена", "Оплачена"].includes(String(task.status || ""));
+                    }).length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
-                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)}</AnimatePresence></div>
+                      <div className="space-y-3">
+                        {managerTasks
+                          .filter((task) => {
+                            if (activeTopTab === "waiting") return ["Ждёт исполнителя", "Есть отклики", "Создана"].includes(String(task.status || ""));
+                            if (activeTopTab === "active") return ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Не оплачена"].includes(String(task.status || ""));
+                            return ["Выполнена", "Оплачена"].includes(String(task.status || ""));
+                          })
+                          .map((task) => (
+                            <div key={`manager-task-${task.id}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.28)]">
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+                                  <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+                                </div>
+                                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">{task.status || "—"}</div>
+                              </div>
+
+                              <div className="mb-3 flex flex-wrap gap-2">
+                                {(task.type || []).map((item) => (
+                                  <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">{item}</span>
+                                ))}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
+                                  <div>{task.deadline || "—"}</div>
+                                </div>
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
+                                  <div>{task.price || "—"}</div>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 text-sm text-white/55">Откликов: {task.responses?.filter((item) => item.decision === "Принял").length || 0}</div>
+
+                              {task.responses?.filter((item) => item.decision === "Принял").length ? (
+                                <div className="mt-4 space-y-2">
+                                  {task.responses
+                                    ?.filter((item) => item.decision === "Принял")
+                                    .map((response) => (
+                                      <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                            <div className="text-sm font-medium text-white">{response.executorName}</div>
+                                            <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
+                                            <div className="mt-1 text-xs text-white/45">Рейтинг: {response.rating ?? "—"} · Выполнено: {response.completedOrders ?? 0}</div>
+                                          </div>
+                                          {task.status !== "Назначена" ? (
+                                            <button
+                                              onClick={() => void handleAssignExecutor(task.id, response.executorId)}
+                                              className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black"
+                                            >
+                                              Назначить
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                      </div>
                     )}
                   </>
                 ) : activeBottomTab === "executors" ? (
