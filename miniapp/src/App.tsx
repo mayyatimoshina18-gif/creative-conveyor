@@ -47,15 +47,6 @@ type Task = {
   paymentMethod?: string | null;
   paymentRequired?: boolean;
   revisionCount?: number;
-  responsesCount?: number;
-  responses?: Array<{
-    executorId: number;
-    executorName: string;
-    executorContact: string;
-    decision: string;
-    rating?: number | null;
-    completedOrders?: number;
-  }>;
 };
 
 type TasksResponse = {
@@ -201,6 +192,28 @@ function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) 
       className="min-h-[110px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
     />
   );
+}
+
+
+function getTaskSortTimestamp(task: Task) {
+  const timestamps = [
+    task.publishedAt,
+    task.createdAt,
+    task.stageMaterials?.thirty?.createdAt,
+    task.stageMaterials?.sixty?.createdAt,
+    task.stageMaterials?.final?.createdAt,
+    task.stageMaterials?.fixesNote?.createdAt,
+    task.stageMaterials?.invoice?.createdAt
+  ]
+    .filter(Boolean)
+    .map((value) => new Date(String(value)).getTime())
+    .filter((value) => Number.isFinite(value));
+
+  return timestamps.length ? Math.max(...timestamps) : 0;
+}
+
+function sortTasksByRecentUpdate(tasks: Task[]) {
+  return [...tasks].sort((a, b) => getTaskSortTimestamp(b) - getTaskSortTimestamp(a) || Number(b.id) - Number(a.id));
 }
 
 function getPaymentDetailsText(value: ExecutorProfile["paymentDetails"]) {
@@ -481,10 +494,8 @@ export default function App() {
     active: [],
     archived: []
   });
-  const [managerTasks, setManagerTasks] = useState<Task[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
-  const [managerTasksError, setManagerTasksError] = useState("");
 
   const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
   const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
@@ -546,34 +557,47 @@ export default function App() {
     }
   }, []);
 
-  const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+  const visibleTasks = useMemo(() => sortTasksByRecentUpdate(tasksData[activeTopTab] || []), [tasksData, activeTopTab]);
   const executorVisibleTasks = useMemo(() => {
-    if (executorTaskTopTab === "new") return executorTasks.available.filter((task) => !task.myDecision);
-    if (executorTaskTopTab === "active") return executorTasks.active;
-    return executorTasks.archived;
+    if (executorTaskTopTab === "new") return sortTasksByRecentUpdate(executorTasks.available.filter((task) => !task.myDecision));
+    if (executorTaskTopTab === "active") return sortTasksByRecentUpdate(executorTasks.active);
+    return sortTasksByRecentUpdate(executorTasks.archived);
   }, [executorTaskTopTab, executorTasks]);
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
 
   const managerExecutorsBadge = useMemo(() => pendingExecutors.length || 0, [pendingExecutors]);
   const managerTasksBadge = useMemo(() => {
-    return (managerTasks || []).reduce((count, task) => {
-      const acceptedResponses = (task.responses || []).filter((item) => item.decision === "Принял").length;
-      const needsAction =
-        acceptedResponses > 0 ||
-        task.status === "На проверке" ||
-        task.status === "Счёт загружен" ||
-        task.status === "Не оплачена" ||
-        task.status === "Ожидает счёт" ||
-        task.status === "Ожидает подтверждения оплаты";
-      return count + (needsAction ? 1 : 0);
-    }, 0);
-  }, [managerTasks]);
+    const waiting = (tasksData.waiting || []).filter((task) => ((task as any).responses || []).some((item: any) => item.decision === "Принял")).length;
+    const active = (tasksData.active || []).filter((task) =>
+      ["На проверке", "Счёт загружен", "Не оплачена", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
+    ).length;
+    return waiting + active;
+  }, [tasksData]);
+
+  const managerTopTabBadges = useMemo(() => {
+    const waiting = (tasksData.waiting || []).filter((task) => ((task as any).responses || []).some((item: any) => item.decision === "Принял")).length;
+    const active = (tasksData.active || []).filter((task) =>
+      ["На проверке", "Счёт загружен", "Не оплачена", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
+    ).length;
+    const archived = (tasksData.archived || []).length;
+    return { waiting, active, archived };
+  }, [tasksData]);
+
   const executorTasksBadge = useMemo(() => {
     const newTasksCount = executorTasks.available.filter((task) => !task.myDecision).length;
-    const actionTasksCount = executorTasks.active.filter((task) =>
+    const activeTasksCount = executorTasks.active.filter((task) =>
       ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "Правки", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
     ).length;
-    return newTasksCount + actionTasksCount;
+    return newTasksCount + activeTasksCount;
+  }, [executorTasks]);
+
+  const executorTopTabBadges = useMemo(() => {
+    const fresh = executorTasks.available.filter((task) => !task.myDecision).length;
+    const active = executorTasks.active.filter((task) =>
+      ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "Правки", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
+    ).length;
+    const archived = executorTasks.archived.length;
+    return { new: fresh, active, archived };
   }, [executorTasks]);
 
   const selectedPendingExecutor = useMemo(
@@ -678,51 +702,39 @@ export default function App() {
     }
   };
 
-  const loadManagerTasks = async () => {
-    try {
-      setManagerTasksError("");
-      if (!createManagerContact.trim()) {
-        setManagerTasks([]);
-        return;
-      }
-
-      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact.trim())}`, {
-        method: "GET"
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error((data as any)?.error || "Failed to load manager tasks");
-      }
-
-      setManagerTasks(Array.isArray((data as any)?.tasks) ? (data as any).tasks : []);
-    } catch (error) {
-      console.error("Failed to load manager tasks:", error);
-      setManagerTasksError("Не удалось загрузить отклики исполнителей");
-    }
-  };
-
   useEffect(() => {
-    if (screen === "managerApp" && activeBottomTab === "tasks") {
+    if (screen === "managerApp") {
       void loadTasks();
-      void loadManagerTasks();
-      void loadApprovedExecutors();
-    }
-  }, [screen, activeBottomTab, createManagerContact]);
-
-  useEffect(() => {
-    if (screen === "managerApp" && activeBottomTab === "executors") {
       void loadPendingExecutors();
       void loadApprovedExecutors();
     }
-  }, [screen, activeBottomTab]);
+  }, [screen]);
 
   useEffect(() => {
-    if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
+    if (screen === "managerApp") {
+      const id = window.setInterval(() => {
+        void loadTasks();
+        void loadPendingExecutors();
+        void loadApprovedExecutors();
+      }, 15000);
+      return () => window.clearInterval(id);
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === "executorApp" && executor?.telegramId) {
       void loadExecutorTasks(Number(executor.telegramId));
     }
-  }, [screen, executorBottomTab, executorTaskTopTab, executor?.telegramId]);
+  }, [screen, executor?.telegramId]);
+
+  useEffect(() => {
+    if (screen === "executorApp" && executor?.telegramId) {
+      const id = window.setInterval(() => {
+        void loadExecutorTasks(Number(executor.telegramId));
+      }, 15000);
+      return () => window.clearInterval(id);
+    }
+  }, [screen, executor?.telegramId]);
 
   const resetExecutorForm = () => {
     setExecutorFormError("");
@@ -833,7 +845,6 @@ export default function App() {
       if (!response.ok) throw new Error("Failed to save decision");
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
       await loadTasks();
-      await loadManagerTasks();
     } catch (error) {
       console.error("Failed to save executor decision:", error);
       setExecutorTasksError("Не удалось обновить статус задачи");
@@ -1054,13 +1065,6 @@ export default function App() {
     } finally {
       setIsLoadingApprovedExecutors(false);
     }
-  };
-
-
-  const getApprovedExecutorRank = (executorId?: number | null) => {
-    if (!executorId) return null;
-    const index = approvedExecutors.findIndex((item) => Number(item.telegramId) === Number(executorId));
-    return index >= 0 ? index + 1 : null;
   };
 
   const openPendingExecutor = (profile: ExecutorProfile) => {
@@ -1690,15 +1694,18 @@ export default function App() {
 
                 {executorBottomTab === "tasks" ? (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
-                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <BottomBadge count={executorTopTabBadges.new} />
                       <CircleDot className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Новые</div>
                     </button>
-                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <BottomBadge count={executorTopTabBadges.active} />
                       <Clock3 className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Активные</div>
                     </button>
-                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <BottomBadge count={executorTopTabBadges.archived} />
                       <Archive className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Архив</div>
                     </button>
@@ -1788,7 +1795,7 @@ export default function App() {
                     <Briefcase className="h-5 w-5" />
                     <span className="text-[10px] leading-none">Задачи</span>
                   </button>
-                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
                     <Trophy className="h-5 w-5" />
                     <span className="text-[10px] leading-none">Профиль</span>
                   </button>
@@ -1828,8 +1835,10 @@ export default function App() {
                     {topTabs.map((tab) => {
                       const Icon = tab.icon;
                       const active = activeTopTab === tab.key;
+                      const badgeCount = tab.key === "waiting" ? managerTopTabBadges.waiting : tab.key === "active" ? managerTopTabBadges.active : managerTopTabBadges.archived;
                       return (
-                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                          <BottomBadge count={badgeCount} />
                           <Icon className="mb-2 h-4 w-4" />
                           <div className="text-[12px] font-medium leading-4">{tab.label}</div>
                         </button>
@@ -1843,10 +1852,11 @@ export default function App() {
                     <button
                       onClick={() => setManagerExecutorsTopTab("pending")}
                       className={cn(
-                        "rounded-[18px] px-3 py-3 text-left transition",
+                        "relative rounded-[18px] px-3 py-3 text-left transition",
                         managerExecutorsTopTab === "pending" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
                       )}
                     >
+                      <BottomBadge count={managerExecutorsBadge} />
                       <div className="text-[12px] font-medium leading-4">Заявки</div>
                     </button>
                     <button
@@ -1865,61 +1875,18 @@ export default function App() {
                 {activeBottomTab === "tasks" ? (
                   <>
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
-                    {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{managerTasksError}</div> : null}
                     {isLoadingTasks ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : tasksError ? (
-                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
+                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => void loadTasks()} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
                       <div className="space-y-3">
                         <AnimatePresence mode="popLayout">
                           {visibleTasks.map((task) => (
-                            <div key={task.id} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.28)]">
+                            <div key={task.id} className="space-y-3">
                               <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
-                              {activeTopTab === "waiting" ? (
-                                (() => {
-                                  const managerTask = managerTasks.find((item) => item.id === task.id) || task;
-                                  const acceptedResponses = (managerTask.responses || []).filter((item) => item.decision === "Принял");
-                                  return acceptedResponses.length ? (
-                                    <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
-                                      <div className="text-sm text-white/55">Откликнулись исполнители</div>
-                                      {acceptedResponses.map((response) => {
-                                        const rank = getApprovedExecutorRank(response.executorId);
-                                        return (
-                                          <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
-                                            <div className="flex items-start justify-between gap-3">
-                                              <div>
-                                                <div className="text-sm font-medium text-white">{response.executorName}</div>
-                                                <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                  {rank ? (
-                                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">
-                                                      Место в рейтинге #{rank}
-                                                    </div>
-                                                  ) : null}
-                                                  {response.rating != null ? (
-                                                    <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">
-                                                      Рейтинг {response.rating}
-                                                    </div>
-                                                  ) : null}
-                                                </div>
-                                              </div>
-                                              <button
-                                                onClick={() => void handleAssignTask(task.id, response.executorId)}
-                                                className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black"
-                                              >
-                                                Подтвердить
-                                              </button>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null;
-                                })()
-                              ) : null}
                               {activeTopTab === "active" ? (
                                 <>
                                   <PipelineView task={task} compact />
