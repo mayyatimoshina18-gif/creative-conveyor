@@ -1624,11 +1624,58 @@ export default function App() {
                                     onChange={(e) => setManagerEditPaymentDetails(e.target.value)}
                                     placeholder={getPaymentPrompt(managerEditPaymentMethod).placeholder}
                                   />
-                                  <FormTextarea
-                                    value={managerEditContractData}
-                                    onChange={(e) => setManagerEditContractData(e.target.value)}
-                                    placeholder="Договор с исполнителем: ссылка, описание или идентификатор файла"
-                                  />
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-2 text-sm text-white/55">Договор</div>
+                                    <FormTextarea
+                                      value={managerEditContractData}
+                                      onChange={(e) => setManagerEditContractData(e.target.value)}
+                                      placeholder="Договор с исполнителем: ссылка, описание или идентификатор файла"
+                                    />
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <div>
+                                        <div className="text-sm text-white/55">Счета на оплату</div>
+                                        <div className="text-xs text-white/40">Загружено: {managerEditInvoices.length}</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setManagerEditInvoices((prev) => [...prev, { value: '', createdAt: new Date().toISOString() }])}
+                                        className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/80"
+                                      >
+                                        Добавить счёт на оплату
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {managerEditInvoices.length ? managerEditInvoices.map((invoice, invoiceIndex) => (
+                                        <div key={`invoice-${invoiceIndex}`} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                                          <div className="mb-2 flex items-center justify-between gap-3">
+                                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">
+                                              Счёт #{invoiceIndex + 1}
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => setManagerEditInvoices((prev) => prev.filter((_, idx) => idx !== invoiceIndex))}
+                                              className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70"
+                                            >
+                                              Удалить
+                                            </button>
+                                          </div>
+                                          <FormInput
+                                            value={invoice.value}
+                                            onChange={(e) => setManagerEditInvoices((prev) => prev.map((item, idx) => idx === invoiceIndex ? { ...item, value: e.target.value } : item))}
+                                            placeholder="Файл, ссылка или комментарий к счёту"
+                                          />
+                                        </div>
+                                      )) : (
+                                        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                                          Счета пока не добавлены.
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
 
                                   <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
                                     <div className="mb-3 text-sm text-white/55">Недоступные дни</div>
@@ -1756,6 +1803,16 @@ export default function App() {
                                 <div className="mt-3 space-y-2 text-sm text-white/55">
                                   <div>Подтвердил: {profile.approvedBy || "—"}</div>
                                   <div className="break-words">Договор: {getPaymentDetailsText(profile.contractData as any) || "—"}</div>
+                                  <div>Счетов на оплату: {profile.paymentInvoices?.length || 0}</div>
+                                  {profile.paymentInvoices?.length ? (
+                                    <div className="space-y-1">
+                                      {profile.paymentInvoices.slice(-3).map((invoice, invoiceIndex) => (
+                                        <div key={`invoice-preview-${profile.telegramId}-${invoiceIndex}`} className="break-words text-white/45">
+                                          • {invoice.value || "—"} {invoice.createdAt ? `(${formatDateLabel(invoice.createdAt)})` : ""}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             ))}
