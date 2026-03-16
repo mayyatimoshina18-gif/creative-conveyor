@@ -1643,8 +1643,21 @@ export default function App() {
                                       {profile.fullName || "Без имени"}
                                     </div>
                                   </div>
-                                  <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-xs text-[#56FFEF]">
-                                    {typeof profile.rating === "number" ? `${profile.rating} pts` : "—"}
+                                  <div className="flex items-center gap-2">
+                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-xs text-[#56FFEF]">
+                                      {typeof profile.rating === "number" ? `${profile.rating} pts` : "—"}
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setEditingRegistryTelegramId(Number(profile.telegramId));
+                                        fillManagerExecutorForm(profile);
+                                        setManagerExecutorMessage("");
+                                        setIsManagerEditingRegistryExecutor(true);
+                                      }}
+                                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
+                                    >
+                                      Редактировать
+                                    </button>
                                   </div>
                                 </div>
 
@@ -1655,7 +1668,7 @@ export default function App() {
                                   </div>
                                   <div className="rounded-2xl bg-black/20 p-3">
                                     <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div>
-                                    <div>{profile.telegramContact || "—"}</div>
+                                    <div className="break-words">{profile.telegramContact || "—"}</div>
                                   </div>
                                   <div className="rounded-2xl bg-black/20 p-3">
                                     <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
@@ -1665,10 +1678,43 @@ export default function App() {
                                     <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заказов</div>
                                     <div>{profile.completedOrders || 0}</div>
                                   </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+                                    <div className="break-words">{profile.portfolio || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ выплаты</div>
+                                    <div>{profile.paymentMethod || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
+                                    <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
+                                    <div>{profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные часы</div>
+                                    <div className="whitespace-pre-wrap break-words">{profile.unavailableTime || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка ТЗ</div>
+                                    <div>{profile.reviewAccuracy ?? "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка сроков</div>
+                                    <div>{profile.reviewSpeed ?? "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка эстетики</div>
+                                    <div>{profile.reviewAesthetics ?? "—"}</div>
+                                  </div>
                                 </div>
 
-                                <div className="mt-3 text-sm text-white/55">
-                                  Подтвердил: {profile.approvedBy || "—"}
+                                <div className="mt-3 space-y-2 text-sm text-white/55">
+                                  <div>Подтвердил: {profile.approvedBy || "—"}</div>
+                                  <div className="break-words">Договор: {getPaymentDetailsText(profile.contractData as any) || "—"}</div>
                                 </div>
                               </div>
                             ))}
