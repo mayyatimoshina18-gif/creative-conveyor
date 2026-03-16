@@ -107,15 +107,6 @@ function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
 }
 
-function BottomBadge({ count }: { count: number }) {
-  if (!count) return null;
-  return (
-    <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-[#56FFEF] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-black">
-      {count > 99 ? "99+" : count}
-    </span>
-  );
-}
-
 function RoleButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -192,28 +183,6 @@ function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) 
       className="min-h-[110px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
     />
   );
-}
-
-
-function getTaskSortTimestamp(task: Task) {
-  const timestamps = [
-    task.publishedAt,
-    task.createdAt,
-    task.stageMaterials?.thirty?.createdAt,
-    task.stageMaterials?.sixty?.createdAt,
-    task.stageMaterials?.final?.createdAt,
-    task.stageMaterials?.fixesNote?.createdAt,
-    task.stageMaterials?.invoice?.createdAt
-  ]
-    .filter(Boolean)
-    .map((value) => new Date(String(value)).getTime())
-    .filter((value) => Number.isFinite(value));
-
-  return timestamps.length ? Math.max(...timestamps) : 0;
-}
-
-function sortTasksByRecentUpdate(tasks: Task[]) {
-  return [...tasks].sort((a, b) => getTaskSortTimestamp(b) - getTaskSortTimestamp(a) || Number(b.id) - Number(a.id));
 }
 
 function getPaymentDetailsText(value: ExecutorProfile["paymentDetails"]) {
@@ -481,7 +450,6 @@ export default function App() {
   const [stageLoading, setStageLoading] = useState(false);
   const [fixesTaskId, setFixesTaskId] = useState<number | null>(null);
   const [fixesValue, setFixesValue] = useState("");
-  const [fixesClientFault, setFixesClientFault] = useState(false);
   const [fixesError, setFixesError] = useState("");
   const [fixesLoading, setFixesLoading] = useState(false);
 
@@ -495,8 +463,14 @@ export default function App() {
     active: [],
     archived: []
   });
+  const [managerTasks, setManagerTasks] = useState<Task[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
+  const [managerTasksError, setManagerTasksError] = useState("");
+  const [deepLinkTaskId, setDeepLinkTaskId] = useState<number | null>(null);
+  const [deepLinkRole, setDeepLinkRole] = useState<"manager" | "executor" | null>(null);
+  const [deepLinkBottomTab, setDeepLinkBottomTab] = useState<string | null>(null);
+  const [deepLinkTopTab, setDeepLinkTopTab] = useState<string | null>(null);
 
   const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
   const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
@@ -558,48 +532,20 @@ export default function App() {
     }
   }, []);
 
-  const visibleTasks = useMemo(() => sortTasksByRecentUpdate(tasksData[activeTopTab] || []), [tasksData, activeTopTab]);
+  const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+
+  const getApprovedExecutorRank = (telegramId?: number) => {
+    if (!telegramId) return null;
+    const sorted = [...approvedExecutors].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
+    const index = sorted.findIndex((item) => Number(item.telegramId) === Number(telegramId));
+    return index === -1 ? null : index + 1;
+  };
   const executorVisibleTasks = useMemo(() => {
-    if (executorTaskTopTab === "new") return sortTasksByRecentUpdate(executorTasks.available.filter((task) => !task.myDecision));
-    if (executorTaskTopTab === "active") return sortTasksByRecentUpdate(executorTasks.active);
-    return sortTasksByRecentUpdate(executorTasks.archived);
+    if (executorTaskTopTab === "new") return executorTasks.available.filter((task) => !task.myDecision);
+    if (executorTaskTopTab === "active") return executorTasks.active;
+    return executorTasks.archived;
   }, [executorTaskTopTab, executorTasks]);
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
-
-  const managerExecutorsBadge = useMemo(() => pendingExecutors.length || 0, [pendingExecutors]);
-  const managerTasksBadge = useMemo(() => {
-    const waiting = (tasksData.waiting || []).filter((task) => ((task as any).responses || []).some((item: any) => item.decision === "Принял")).length;
-    const active = (tasksData.active || []).filter((task) =>
-      ["На проверке", "Счёт загружен", "Не оплачена", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
-    ).length;
-    return waiting + active;
-  }, [tasksData]);
-
-  const managerTopTabBadges = useMemo(() => {
-    const waiting = (tasksData.waiting || []).filter((task) => ((task as any).responses || []).some((item: any) => item.decision === "Принял")).length;
-    const active = (tasksData.active || []).filter((task) =>
-      ["На проверке", "Счёт загружен", "Не оплачена", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
-    ).length;
-    const archived = (tasksData.archived || []).length;
-    return { waiting, active, archived };
-  }, [tasksData]);
-
-  const executorTasksBadge = useMemo(() => {
-    const newTasksCount = executorTasks.available.filter((task) => !task.myDecision).length;
-    const activeTasksCount = executorTasks.active.filter((task) =>
-      ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "Правки", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
-    ).length;
-    return newTasksCount + activeTasksCount;
-  }, [executorTasks]);
-
-  const executorTopTabBadges = useMemo(() => {
-    const fresh = executorTasks.available.filter((task) => !task.myDecision).length;
-    const active = executorTasks.active.filter((task) =>
-      ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "Правки", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
-    ).length;
-    const archived = executorTasks.archived.length;
-    return { new: fresh, active, archived };
-  }, [executorTasks]);
 
   const selectedPendingExecutor = useMemo(
     () => pendingExecutors.find((item) => Number(item.telegramId) === Number(selectedPendingTelegramId)) || null,
@@ -704,45 +650,56 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (screen === "managerApp") {
+    if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks();
+    }
+  }, [screen, activeBottomTab]);
+
+  useEffect(() => {
+    if (screen === "managerApp" && activeBottomTab === "executors") {
       void loadPendingExecutors();
       void loadApprovedExecutors();
     }
-  }, [screen]);
+  }, [screen, activeBottomTab]);
 
   useEffect(() => {
-    const hasOpenModal = Boolean(stageTaskId || fixesTaskId || selectedTask);
-    if (screen === "managerApp" && !hasOpenModal) {
-      const id = window.setInterval(() => {
-        if (activeBottomTab === "tasks") {
-          void loadTasks();
-        }
-        if (activeBottomTab === "executors") {
-          void loadPendingExecutors();
-          void loadApprovedExecutors();
-        }
-      }, 30000);
-      return () => window.clearInterval(id);
-    }
-  }, [screen, activeBottomTab, stageTaskId, fixesTaskId, selectedTask]);
-
-  useEffect(() => {
-    if (screen === "executorApp" && executor?.telegramId) {
+    if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
       void loadExecutorTasks(Number(executor.telegramId));
     }
-  }, [screen, executor?.telegramId]);
+  }, [screen, executorBottomTab, executorTaskTopTab, executor?.telegramId]);
+
 
   useEffect(() => {
-    const hasOpenModal = Boolean(stageTaskId || fixesTaskId || selectedTask);
-    if (screen === "executorApp" && executor?.telegramId && !hasOpenModal) {
-      const id = window.setInterval(() => {
-        void loadExecutorTasks(Number(executor.telegramId));
-      }, 30000);
-      return () => window.clearInterval(id);
-    }
-  }, [screen, executor?.telegramId, stageTaskId, fixesTaskId, selectedTask]);
+    if (!deepLinkTaskId) return;
 
+    if (deepLinkRole === "manager" && screen === "managerApp") {
+      if (deepLinkBottomTab === "tasks") setActiveBottomTab("tasks");
+      if (deepLinkBottomTab === "executors") setActiveBottomTab("executors");
+      if (deepLinkTopTab === "waiting" || deepLinkTopTab === "active" || deepLinkTopTab === "archived") {
+        setActiveTopTab(deepLinkTopTab);
+      }
+
+      const allTasks = [...(tasksData.waiting || []), ...(tasksData.active || []), ...(tasksData.archived || [])];
+      const found = allTasks.find((task) => Number(task.id) === Number(deepLinkTaskId)) || managerTasks.find((task) => Number(task.id) === Number(deepLinkTaskId));
+      if (found) {
+        setSelectedTask(found);
+        setDeepLinkTaskId(null);
+      }
+    }
+
+    if (deepLinkRole === "executor" && screen === "executorApp") {
+      setExecutorBottomTab("tasks");
+      if (deepLinkTopTab === "new" || deepLinkTopTab === "active" || deepLinkTopTab === "archived") {
+        setExecutorTaskTopTab(deepLinkTopTab);
+      }
+      const allTasks = [...executorTasks.available, ...executorTasks.active, ...executorTasks.archived];
+      const found = allTasks.find((task) => Number(task.id) === Number(deepLinkTaskId));
+      if (found) {
+        setSelectedTask(found);
+        setDeepLinkTaskId(null);
+      }
+    }
+  }, [deepLinkTaskId, deepLinkRole, deepLinkBottomTab, deepLinkTopTab, screen, tasksData, managerTasks, executorTasks]);
   const resetExecutorForm = () => {
     setExecutorFormError("");
     setExecutorInfo("");
@@ -840,6 +797,24 @@ export default function App() {
     }
   };
 
+  const handleAssignTask = async (taskId: number, executorId: number) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, executorId })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "Failed to assign task");
+      await loadTasks();
+      await loadManagerTasks();
+      if (executor?.telegramId) await loadExecutorTasks(Number(executor.telegramId));
+    } catch (error) {
+      console.error("Failed to assign executor:", error);
+      setManagerTasksError("Не удалось назначить исполнителя");
+    }
+  };
+
   const handleExecutorTaskDecision = async (taskId: number, decision: "accept" | "decline") => {
     try {
       const telegram = (window as any)?.Telegram?.WebApp;
@@ -901,23 +876,6 @@ export default function App() {
       setStageError("Введи ссылку или комментарий");
       return;
     }
-
-    const currentTask =
-      executorTasks.active.find((item) => item.id === stageTaskId) ||
-      executorTasks.archived.find((item) => item.id === stageTaskId) ||
-      executorTasks.available.find((item) => item.id === stageTaskId);
-
-    const stageAllowed =
-      (stageKey === "30" && currentTask?.status === "В работе") ||
-      (stageKey === "60" && currentTask?.status === "30%") ||
-      (stageKey === "final" && (currentTask?.status === "60%" || currentTask?.status === "Правки")) ||
-      stageKey === "invoice";
-
-    if (!stageAllowed) {
-      setStageError("Статус задачи уже изменился. Обнови экран.");
-      return;
-    }
-
     try {
       setStageLoading(true);
       const response = await fetch(`${API_BASE}/api/tasks/stage-submit`, {
@@ -925,8 +883,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error((data as any)?.error || "Failed stage submit");
+      if (!response.ok) throw new Error("Failed stage submit");
       setStageTaskId(null);
       setStageKey(null);
       setStageValue("");
@@ -972,13 +929,12 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim(), clientFault: fixesClientFault })
+        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim() })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "fixes submit failed");
       setFixesTaskId(null);
       setFixesValue("");
-      setFixesClientFault(false);
       await loadTasks();
       await loadManagerTasks();
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
@@ -1022,6 +978,32 @@ export default function App() {
     setModerationVerifiedSpecializations((prev) =>
       prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
     );
+  };
+
+
+  const loadManagerTasks = async () => {
+    try {
+      setManagerTasksError("");
+      if (!createManagerContact.trim()) {
+        setManagerTasks([]);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact.trim())}`, {
+        method: "GET"
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error((data as any)?.error || "Failed to load manager tasks");
+      }
+
+      setManagerTasks(Array.isArray((data as any)?.tasks) ? (data as any).tasks : []);
+    } catch (error) {
+      console.error("Failed to load manager tasks:", error);
+      setManagerTasksError("Не удалось загрузить отклики исполнителей");
+    }
   };
 
   const loadPendingExecutors = async () => {
@@ -1720,18 +1702,15 @@ export default function App() {
 
                 {executorBottomTab === "tasks" ? (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
-                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                      <BottomBadge count={executorTopTabBadges.new} />
+                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
                       <CircleDot className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Новые</div>
                     </button>
-                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                      <BottomBadge count={executorTopTabBadges.active} />
+                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
                       <Clock3 className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Активные</div>
                     </button>
-                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                      <BottomBadge count={executorTopTabBadges.archived} />
+                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
                       <Archive className="mb-2 h-4 w-4" />
                       <div className="text-[12px] font-medium leading-4">Архив</div>
                     </button>
@@ -1816,12 +1795,11 @@ export default function App() {
 
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
-                    <BottomBadge count={executorTasksBadge} />
+                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
                     <Briefcase className="h-5 w-5" />
                     <span className="text-[10px] leading-none">Задачи</span>
                   </button>
-                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
                     <Trophy className="h-5 w-5" />
                     <span className="text-[10px] leading-none">Профиль</span>
                   </button>
@@ -1861,10 +1839,8 @@ export default function App() {
                     {topTabs.map((tab) => {
                       const Icon = tab.icon;
                       const active = activeTopTab === tab.key;
-                      const badgeCount = tab.key === "waiting" ? managerTopTabBadges.waiting : tab.key === "active" ? managerTopTabBadges.active : managerTopTabBadges.archived;
                       return (
-                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("relative rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
-                          <BottomBadge count={badgeCount} />
+                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
                           <Icon className="mb-2 h-4 w-4" />
                           <div className="text-[12px] font-medium leading-4">{tab.label}</div>
                         </button>
@@ -1878,11 +1854,10 @@ export default function App() {
                     <button
                       onClick={() => setManagerExecutorsTopTab("pending")}
                       className={cn(
-                        "relative rounded-[18px] px-3 py-3 text-left transition",
+                        "rounded-[18px] px-3 py-3 text-left transition",
                         managerExecutorsTopTab === "pending" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
                       )}
                     >
-                      <BottomBadge count={managerExecutorsBadge} />
                       <div className="text-[12px] font-medium leading-4">Заявки</div>
                     </button>
                     <button
@@ -1901,10 +1876,11 @@ export default function App() {
                 {activeBottomTab === "tasks" ? (
                   <>
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
+                    {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-3 text-sm text-rose-200">{managerTasksError}</div> : null}
                     {isLoadingTasks ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : tasksError ? (
-                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => void loadTasks()} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
+                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
@@ -1913,6 +1889,35 @@ export default function App() {
                           {visibleTasks.map((task) => (
                             <div key={task.id} className="space-y-3">
                               <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                              {activeTopTab === "waiting" ? (
+                                (() => {
+                                  const managerTask = managerTasks.find((item) => item.id === task.id) || task;
+                                  const acceptedResponses = ((managerTask as any).responses || []).filter((item: any) => item.decision === "Принял");
+                                  return acceptedResponses.length ? (
+                                    <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
+                                      <div className="text-sm text-white/55">Откликнулись исполнители</div>
+                                      {acceptedResponses.map((response: any) => {
+                                        const rank = getApprovedExecutorRank(response.executorId);
+                                        return (
+                                          <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                              <div>
+                                                <div className="text-sm font-medium text-white">{response.executorName}</div>
+                                                <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                  {rank ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Место в рейтинге #{rank}</div> : null}
+                                                  {response.rating != null ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">Рейтинг {response.rating}</div> : null}
+                                                </div>
+                                              </div>
+                                              <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null;
+                                })()
+                              ) : null}
                               {activeTopTab === "active" ? (
                                 <>
                                   <PipelineView task={task} compact />
@@ -2426,7 +2431,7 @@ export default function App() {
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
                 )}
               </div>
-              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; const badgeCount = tab.key === "executors" ? managerExecutorsBadge : tab.key === "tasks" ? managerTasksBadge : 0; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><BottomBadge count={badgeCount} /><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2438,18 +2443,9 @@ export default function App() {
             <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
               <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
-              <label className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
-                <input
-                  type="checkbox"
-                  checked={fixesClientFault}
-                  onChange={(e) => setFixesClientFault(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                <span>Правка по вине клиента</span>
-              </label>
               {fixesError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{fixesError}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesClientFault(false); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
                 <button onClick={() => void submitFixes()} disabled={fixesLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{fixesLoading ? "Отправляю..." : "Отправить"}</button>
               </div>
             </div>
