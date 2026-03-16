@@ -3699,13 +3699,34 @@ ${task.title}`,
             task.status = "Правки";
             task.stageMaterials = task.stageMaterials || {};
             if (!Array.isArray(task.stageMaterials.fixesHistory)) task.stageMaterials.fixesHistory = [];
-            task.stageMaterials.fixesNote = { value: String(payload.note || "").trim(), createdAt: new Date().toISOString() };
-            task.stageMaterials.fixesHistory.push(task.stageMaterials.fixesNote);
             task.timeline.returnedForFixesAt = new Date().toISOString();
             task.timeline.revisionCount = Number(task.timeline.revisionCount || 0) + 1;
+
+            const revisionCount = Number(task.timeline.revisionCount || 0);
+            const clientFault = Boolean(payload.clientFault);
+            let penaltyPercent = 0;
+
+            if (!clientFault) {
+              if (revisionCount === 1) penaltyPercent = 0;
+              else if (revisionCount === 2) penaltyPercent = 2;
+              else if (revisionCount === 3) penaltyPercent = 3;
+              else if (revisionCount === 4) penaltyPercent = 3;
+              else if (revisionCount === 5) penaltyPercent = 3;
+              else if (revisionCount >= 6) penaltyPercent = 5;
+            }
+
+            task.stageMaterials.fixesNote = {
+              value: String(payload.note || "").trim(),
+              createdAt: new Date().toISOString(),
+              clientFault,
+              penaltyPercent,
+              revisionCount
+            };
+            task.stageMaterials.fixesHistory.push(task.stageMaterials.fixesNote);
+
             const executor = executors.get(task.assignedExecutorId);
-            if (executor && typeof executor.rating === "number") {
-              executor.rating = Math.max(0, Math.round(executor.rating * 0.9));
+            if (executor && typeof executor.rating === "number" && penaltyPercent > 0) {
+              executor.rating = Math.max(0, Math.round(executor.rating * (1 - penaltyPercent / 100)));
               await saveExecutorToDb(executor);
               executors.set(executor.telegramId, executor);
             }
