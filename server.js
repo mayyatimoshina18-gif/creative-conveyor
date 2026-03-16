@@ -3321,9 +3321,11 @@ const comment = payload.comment ? String(payload.comment) : null;
               return;
             }
 
+            const publishedAt = new Date().toISOString();
+
             const newTask = {
               id: null,
-              createdAt: new Date().toISOString(),
+              createdAt: publishedAt,
               managerId,
               managerUsername,
               managerContact,
@@ -3343,9 +3345,9 @@ refs_data: refsData
   ? { type: "text", value: refsData }
   : null,
 comment,
-              status: "Создана",
+              status: "Ждёт исполнителя",
               responses: [],
-              publishedAt: null,
+              publishedAt,
               assignedExecutorId: null,
               assignedExecutorName: null,
               assignedExecutorContact: null,
