@@ -100,6 +100,17 @@ const bottomTabs = [
   { key: "profile", label: "Профиль", icon: Trophy }
 ];
 
+const executorBottomTabs = [
+  { key: "tasks", label: "Задачи", icon: Briefcase },
+  { key: "profile", label: "Профиль", icon: Users }
+] as const;
+
+const executorTaskTabs = [
+  { key: "new", label: "Новые", icon: CircleDot },
+  { key: "active", label: "Активные", icon: Clock3 },
+  { key: "archived", label: "Архив", icon: Archive }
+] as const;
+
 function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
 }
@@ -277,6 +288,8 @@ export default function App() {
   const [executorFormError, setExecutorFormError] = useState("");
   const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
   const [isExecutorEditing, setIsExecutorEditing] = useState(false);
+  const [executorBottomTab, setExecutorBottomTab] = useState<"tasks" | "profile">("tasks");
+  const [executorTasksTopTab, setExecutorTasksTopTab] = useState<"new" | "active" | "archived">("new");
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -359,6 +372,27 @@ export default function App() {
 
   const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
   const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
+
+  const executorNewTasks = useMemo(
+    () => executorAvailableTasks,
+    [executorAvailableTasks]
+  );
+
+  const executorActiveTasks = useMemo(
+    () =>
+      executorAssignedTasks.filter(
+        (task) => !["Выполнена", "Оплачена"].includes(String(task.status || ""))
+      ),
+    [executorAssignedTasks]
+  );
+
+  const executorArchivedTasks = useMemo(
+    () =>
+      executorAssignedTasks.filter((task) =>
+        ["Выполнена", "Оплачена"].includes(String(task.status || ""))
+      ),
+    [executorAssignedTasks]
+  );
 
   const selectedPendingExecutor = useMemo(
     () => pendingExecutors.find((item) => Number(item.telegramId) === Number(selectedPendingTelegramId)) || null,
@@ -1333,88 +1367,222 @@ export default function App() {
           )}
 
           {screen === "executorApp" && (
-            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
-              <button onClick={() => { setIsExecutorEditing(false); setExecutorInfo(""); setScreen("welcome"); }} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
-
-              {!isExecutorEditing ? (
-                <>
-                  <div className="mb-8 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
-                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Кабинет исполнителя</h2>
+            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col">
+              <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">Кабинет исполнителя</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">
+                      {isExecutorEditing ? "Редактирование профиля" : executorBottomTab === "tasks" ? "Задачи" : "Профиль"}
                     </div>
-                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(true); }} className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"><Pencil className="h-4 w-4" />Редактировать</button>
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
-                    {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                  {isExecutorEditing ? (
+                    <button
+                      onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"
+                    >
+                      Отмена
+                    </button>
+                  ) : executorBottomTab === "profile" ? (
+                    <button
+                      onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(true); }}
+                      className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Редактировать
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void loadExecutorTasks(executor?.telegramId)}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"
+                    >
+                      Обновить
+                    </button>
+                  )}
+                </div>
 
-                    <div className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-medium text-white">Новые задачи</div>
-                          <div className="text-xs text-white/40">Только подходящие по подтверждённым специализациям</div>
-                        </div>
-                        <button onClick={() => void loadExecutorTasks(executor?.telegramId)} className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75">Обновить</button>
+                {!isExecutorEditing && executorBottomTab === "tasks" && (
+                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    {executorTaskTabs.map((tab) => {
+                      const Icon = tab.icon;
+                      const active = executorTasksTopTab === tab.key;
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => setExecutorTasksTopTab(tab.key)}
+                          className={cn(
+                            "rounded-[18px] px-3 py-3 text-left transition",
+                            active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                          )}
+                        >
+                          <Icon className="mb-2 h-4 w-4" />
+                          <div className="text-[12px] font-medium leading-4">{tab.label}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 px-5 pb-28 pt-4">
+                {isExecutorEditing ? (
+                  renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)
+                ) : executorBottomTab === "tasks" ? (
+                  <>
+                    {executorInfo ? (
+                      <div className="mb-4 rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+                        {executorInfo}
                       </div>
+                    ) : null}
+
+                    {isLoadingExecutorTasks ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                        Загружаю задачи...
+                      </div>
+                    ) : executorTasksTopTab === "new" ? (
                       <div className="space-y-3">
-                        {isLoadingExecutorTasks ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/55">Загружаю задачи...</div> : !executorAvailableTasks.length ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/45">Пока нет новых задач.</div> : executorAvailableTasks.map((task) => (
-                          <div key={`avail-${task.id}`} className="rounded-2xl bg-black/20 p-3">
-                            <div className="mb-1 text-sm font-medium text-white">{task.title}</div>
-                            <div className="mb-2 text-xs text-white/45">{(task.type || []).join(", ")} · {task.deadline || "—"} · {task.price || "—"}</div>
-                            <div className="mb-2 text-xs text-white/55">Куда отгружать: {formatMaterialField(task.brief)}</div>
-                            <div className="mb-3 text-xs text-white/55">Комментарий: {task.comment || "—"}</div>
-                            {task.myDecision ? (
-                              <div className="text-xs text-[#56FFEF]">Твой статус: {task.myDecision}</div>
-                            ) : (
-                              <div className="grid grid-cols-2 gap-2">
-                                <button onClick={() => void handleExecutorTaskDecision(task.id, "Принял")} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Откликнуться</button>
-                                <button onClick={() => void handleExecutorTaskDecision(task.id, "Отклонил")} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">Скрыть</button>
+                        {!executorNewTasks.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            Пока нет новых задач.
+                          </div>
+                        ) : (
+                          executorNewTasks.map((task) => (
+                            <div key={`avail-${task.id}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+                                  <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
 
-                    <div className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
-                      <div className="mb-3 text-sm font-medium text-white">Мои задачи</div>
-                      <div className="space-y-3">
-                        {!executorAssignedTasks.length ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/45">Назначенных задач пока нет.</div> : executorAssignedTasks.map((task) => (
-                          <div key={`assigned-${task.id}`} className="rounded-2xl bg-black/20 p-3">
-                            <div className="mb-1 text-sm font-medium text-white">{task.title}</div>
-                            <div className="text-xs text-white/45">Статус: {task.status || "—"} · {task.deadline || "—"}</div>
-                            <div className="mt-2 text-xs text-white/55">Источники: {formatMaterialField(task.sources)}</div>
-                            <div className="text-xs text-white/55">Референсы: {formatMaterialField(task.refsData)}</div>
-                            <div className="text-xs text-white/55">Комментарий: {task.comment || "—"}</div>
-                          </div>
-                        ))}
+                              <div className="mb-3 flex flex-wrap gap-2">
+                                {(task.type || []).map((item) => (
+                                  <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+                                    {item}
+                                  </span>
+                                ))}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
+                                  <div>{task.deadline || "—"}</div>
+                                </div>
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
+                                  <div>{task.price || "—"}</div>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
+                              <div className="mt-3 text-sm text-white/55">ТЗ: {formatMaterialField(task.brief)}</div>
+                              <div className="mt-1 text-sm text-white/55">Источники: {formatMaterialField(task.sources)}</div>
+                              <div className="mt-1 text-sm text-white/55">Референсы: {formatMaterialField(task.refsData)}</div>
+                              <div className="mt-1 text-sm text-white/55">Комментарий: {task.comment || "—"}</div>
+
+                              <div className="mt-4 grid grid-cols-2 gap-2">
+                                <button
+                                  onClick={() => void handleExecutorTaskDecision(task.id, "Принял")}
+                                  className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black"
+                                >
+                                  Откликнуться
+                                </button>
+                                <button
+                                  onClick={() => void handleExecutorTaskDecision(task.id, "Отклонил")}
+                                  className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75"
+                                >
+                                  Скрыть
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
+                    ) : executorTasksTopTab === "active" ? (
+                      <div className="space-y-3">
+                        {!executorActiveTasks.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            Активных задач пока нет.
+                          </div>
+                        ) : (
+                          executorActiveTasks.map((task) => (
+                            <div key={`assigned-${task.id}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+                              <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+                              <div className="mt-2 text-sm text-white/55">Статус: {task.status || "—"}</div>
+                              <div className="mt-2 text-sm text-white/55">Дедлайн: {task.deadline || "—"}</div>
+                              <div className="mt-2 text-sm text-white/55">Стоимость: {task.price || "—"}</div>
+                              <div className="mt-2 text-sm text-white/55">ТЗ: {formatMaterialField(task.brief)}</div>
+                              <div className="mt-1 text-sm text-white/55">Источники: {formatMaterialField(task.sources)}</div>
+                              <div className="mt-1 text-sm text-white/55">Референсы: {formatMaterialField(task.refsData)}</div>
+                              <div className="mt-1 text-sm text-white/55">Комментарий: {task.comment || "—"}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {!executorArchivedTasks.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            Архивных задач пока нет.
+                          </div>
+                        ) : (
+                          executorArchivedTasks.map((task) => (
+                            <div key={`arch-${task.id}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+                              <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+                              <div className="mt-2 text-sm text-white/55">Статус: {task.status || "—"}</div>
+                              <div className="mt-2 text-sm text-white/55">Дедлайн: {task.deadline || "—"}</div>
+                              <div className="mt-2 text-sm text-white/55">Стоимость: {task.price || "—"}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-3">
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor?.verifiedSpecializations?.join(", ") : "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
+                      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные часы</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
                     </div>
+                    {executorInfo ? <div className="mt-4 rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                  </>
+                )}
+              </div>
+
+              {!isExecutorEditing && (
+                <div className="fixed bottom-0 left-1/2 z-10 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
+                  <div className="grid grid-cols-2 gap-1">
+                    {executorBottomTabs.map((tab) => {
+                      const Icon = tab.icon;
+                      const active = executorBottomTab === tab.key;
+                      return (
+                        <button
+                          key={tab.key}
+                          onClick={() => setExecutorBottomTab(tab.key)}
+                          className={cn(
+                            "flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition",
+                            active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]"
+                          )}
+                        >
+                          <Icon className="h-5 w-5" />
+                          <span className="text-[10px] leading-none">{tab.label}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                </>
-              ) : (
-                <>
-                  <div className="mb-8 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
-                      <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Редактирование анкеты</h2>
-                    </div>
-                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Отмена</button>
-                  </div>
-                  {renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)}
-                </>
+                </div>
               )}
             </motion.div>
           )}
