@@ -827,6 +827,54 @@ export default function App() {
     }
   };
 
+
+  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid") => {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, action })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "manager stage action failed");
+      await loadTasks();
+      await loadManagerTasks();
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+    } catch (error) {
+      console.error("Failed manager stage action:", error);
+      setManagerTasksError("Не удалось обновить статус задачи");
+    }
+  };
+
+  const submitFixes = async () => {
+    if (!fixesTaskId) return;
+    if (!fixesValue.trim()) {
+      setFixesError("Опиши, что нужно исправить");
+      return;
+    }
+    try {
+      setFixesLoading(true);
+      setFixesError("");
+      const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim() })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "fixes submit failed");
+      setFixesTaskId(null);
+      setFixesValue("");
+      await loadTasks();
+      await loadManagerTasks();
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+    } catch (error) {
+      console.error("Failed to submit fixes:", error);
+      setFixesError("Не удалось отправить задачу на правки");
+    } finally {
+      setFixesLoading(false);
+    }
+  };
+
   const handleManagerLogin = () => {
     if (!password.trim()) {
       setPasswordError("Введи пароль менеджера");
