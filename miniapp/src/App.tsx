@@ -41,7 +41,12 @@ type Task = {
     thirty?: { value?: string; createdAt?: string } | null;
     sixty?: { value?: string; createdAt?: string } | null;
     final?: { value?: string; createdAt?: string } | null;
+    fixesNote?: { value?: string; createdAt?: string } | null;
+    invoice?: { value?: string; createdAt?: string } | null;
   };
+  paymentMethod?: string | null;
+  paymentRequired?: boolean;
+  revisionCount?: number;
 };
 
 type TasksResponse = {
@@ -247,8 +252,12 @@ function getCurrentStageLabel(status?: string | null) {
   if (status === "ТЗ изучено") return "Взял в работу";
   if (status === "В работе") return "Подготовка 30%";
   if (status === "30%") return "Подготовка 60%";
-  if (status === "60%" || status === "Правки") return "Финальная сдача";
+  if (status === "60%") return "Финальная сдача";
+  if (status === "Правки") return "Исправление правок";
   if (status === "На проверке") return "Проверка менеджером";
+  if (status === "Ожидает счёт") return "Ожидается счёт";
+  if (status === "Счёт загружен") return "Оплата менеджером";
+  if (status === "Ожидает подтверждения оплаты") return "Подтверждение оплаты";
   if (status === "Выполнена" || status === "Не оплачена") return "Ожидает оплату";
   if (status === "Оплачена") return "Завершено";
   return status;
@@ -370,11 +379,20 @@ function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => 
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Источники</div><div className="whitespace-pre-wrap break-words">{task.sourcesText || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div className="whitespace-pre-wrap break-words">{task.refsText || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div className="whitespace-pre-wrap break-words">{task.comment || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Правки менеджера</div><div className="whitespace-pre-wrap break-words">{task.stageMaterials?.fixesNote?.value || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div className="whitespace-pre-wrap break-words">{task.stageMaterials?.invoice?.value || "—"}</div></div>
         </div>
 
         <div className="mt-4">
           <PipelineView task={task} />
         </div>
+
+        {task.status === "На проверке" ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+            <div className="text-sm text-white/45 self-center text-right">Используй кнопки под карточкой задачи</div>
+          </div>
+        ) : null}
 
       </div>
     </div>
@@ -418,10 +436,14 @@ export default function App() {
   const [executorTasksError, setExecutorTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
-  const [stageKey, setStageKey] = useState<"30" | "60" | "final" | null>(null);
+  const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
   const [stageValue, setStageValue] = useState("");
   const [stageError, setStageError] = useState("");
   const [stageLoading, setStageLoading] = useState(false);
+  const [fixesTaskId, setFixesTaskId] = useState<number | null>(null);
+  const [fixesValue, setFixesValue] = useState("");
+  const [fixesError, setFixesError] = useState("");
+  const [fixesLoading, setFixesLoading] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -1576,6 +1598,11 @@ export default function App() {
                             ) : executorTaskTopTab === "active" ? (
                               <>
                                 <PipelineView task={task} compact />
+                                {task.status === "Правки" && task.stageMaterials?.fixesNote?.value ? (
+                                  <button onClick={() => setSelectedTask(task)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">
+                                    Посмотреть правки
+                                  </button>
+                                ) : null}
                                 {executorActionButtonLabel(task.status) ? (
                                   <button onClick={() => void handleExecutorStageAction(task)} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">
                                     {executorActionButtonLabel(task.status)}
@@ -1711,7 +1738,35 @@ export default function App() {
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
-                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} onOpen={() => setSelectedTask(task)} />)}</AnimatePresence></div>
+                      <div className="space-y-3">
+                        <AnimatePresence mode="popLayout">
+                          {visibleTasks.map((task) => (
+                            <div key={task.id} className="space-y-3">
+                              <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                              {activeTopTab === "active" ? (
+                                <>
+                                  <PipelineView task={task} compact />
+                                  {task.status === "На проверке" ? (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять</button>
+                                      <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
+                                    </div>
+                                  ) : null}
+                                  {task.status === "Счёт загружен" ? (
+                                    <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Счёт оплачен</button>
+                                  ) : null}
+                                  {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
+                                      <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Оплачена</button>
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          ))}
+                        </AnimatePresence>
+                      </div>
                     )}
                   </>
                 ) : activeBottomTab === "executors" ? (
@@ -2207,6 +2262,20 @@ export default function App() {
         </AnimatePresence>
 
         <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+
+        {fixesTaskId ? (
+          <div className="fixed inset-0 z-[65] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
+              <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
+              {fixesError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{fixesError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitFixes()} disabled={fixesLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{fixesLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {stageTaskId && stageKey ? (
           <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
