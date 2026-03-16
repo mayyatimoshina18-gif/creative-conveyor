@@ -3393,21 +3393,21 @@ comment,
       const telegramId = Number(url.searchParams.get("telegramId") || 0);
       const profile = executors.get(telegramId);
       if (!profile) return sendJson(res, 200, { available: [], active: [], archived: [] });
-      const executorSpecializations = (Array.isArray(profile.verifiedSpecializations) && profile.verifiedSpecializations.length
-        ? profile.verifiedSpecializations
-        : profile.specializations) || [];
+      const executorSpecializations = (Array.isArray(profile.verifiedSpecializations) ? profile.verifiedSpecializations : []) || [];
 
       const available = tasks
         .filter((task) =>
           ["Ждёт исполнителя", "Есть отклики", "Создана"].includes(task.status) &&
-          executorSpecializations.some((spec) => (task.categories || []).includes(spec))
+          Array.isArray(task.categories) &&
+          task.categories.length > 0 &&
+          task.categories.every((spec) => executorSpecializations.includes(spec))
         )
         .map((task) => {
           const response = (task.responses || []).find((item) => item.executorId === telegramId);
           return { ...mapTaskForMiniapp(task), myDecision: response?.decision || null };
         });
-      const active = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Не оплачена"].includes(task.status)).map(mapTaskForMiniapp);
-      const archived = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Выполнена", "Оплачена"].includes(task.status)).map(mapTaskForMiniapp);
+      const active = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты", "Не оплачена", "Выполнена"].includes(task.status)).map(mapTaskForMiniapp);
+      const archived = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Оплачена"].includes(task.status)).map(mapTaskForMiniapp);
       return sendJson(res, 200, { available, active, archived });
     }
 
@@ -3538,6 +3538,54 @@ comment,
       return;
     }
 
+
+    if (req.method === "POST" && req.url === "/api/tasks/invoice-submit") {
+      let body = "";
+      req.on("data", (chunk) => body += chunk.toString());
+      req.on("end", async () => {
+        try {
+          const payload = JSON.parse(body || "{}");
+          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
+          const telegramId = Number(payload.telegramId || 0);
+          const value = String(payload.value || "").trim();
+          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
+          if (task.status !== "Ожидает счёт") return sendJson(res, 400, { error: "Invoice is not expected" });
+          task.stageMaterials = task.stageMaterials || {};
+          task.stageMaterials.invoice = { type: "text", value, createdAt: new Date().toISOString() };
+          task.status = "Счёт загружен";
+          task.timeline.invoiceSubmittedAt = new Date().toISOString();
+          await saveTaskToDb(task);
+          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+        } catch (error) {
+          console.error(error);
+          sendJson(res, 500, { error: "Failed to submit invoice" });
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/tasks/confirm-payment") {
+      let body = "";
+      req.on("data", (chunk) => body += chunk.toString());
+      req.on("end", async () => {
+        try {
+          const payload = JSON.parse(body || "{}");
+          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
+          const telegramId = Number(payload.telegramId || 0);
+          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
+          if (task.status !== "Ожидает подтверждения оплаты") return sendJson(res, 400, { error: "Payment confirmation is not expected" });
+          task.status = "Оплачена";
+          task.timeline.paymentConfirmedAt = new Date().toISOString();
+          await saveTaskToDb(task);
+          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+        } catch (error) {
+          console.error(error);
+          sendJson(res, 500, { error: "Failed to confirm payment" });
+        }
+      });
+      return;
+    }
+
     if (req.method === "POST" && req.url === "/api/tasks/manager-stage-action") {
       let body = "";
       req.on("data", (chunk) => body += chunk.toString());
@@ -3547,9 +3595,16 @@ comment,
           const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
           if (!task) return sendJson(res, 404, { error: "Task not found" });
           if (payload.action === "approve") {
-            task.status = "Выполнена";
-            task.timeline.approvedAt = new Date().toISOString();
             const executor = executors.get(task.assignedExecutorId);
+            task.timeline.approvedAt = new Date().toISOString();
+            if (executor && ["ИП", "Самозанятость"].includes(String(executor.paymentMethod || ""))) {
+              task.status = "Ожидает счёт";
+              task.stageMaterials = task.stageMaterials || {};
+              task.stageMaterials.paymentMeta = { required: true, method: executor.paymentMethod };
+            } else {
+              task.status = "Выполнена";
+              task.timeline.unpaidAt = new Date().toISOString();
+            }
             if (executor) {
               executor.completedOrders = (executor.completedOrders || 0) + 1;
               await saveExecutorToDb(executor);
@@ -3557,12 +3612,25 @@ comment,
             }
           } else if (payload.action === "fixes") {
             task.status = "Правки";
+            task.stageMaterials = task.stageMaterials || {};
+            task.stageMaterials.fixesNote = { value: String(payload.note || "").trim(), createdAt: new Date().toISOString() };
             task.timeline.returnedForFixesAt = new Date().toISOString();
+            task.timeline.revisionCount = Number(task.timeline.revisionCount || 0) + 1;
+            const executor = executors.get(task.assignedExecutorId);
+            if (executor && typeof executor.rating === "number") {
+              executor.rating = Math.max(0, Math.round(executor.rating * 0.9));
+              await saveExecutorToDb(executor);
+              executors.set(executor.telegramId, executor);
+            }
           } else if (payload.action === "unpaid") {
             task.status = "Не оплачена";
             task.timeline.unpaidAt = new Date().toISOString();
           } else if (payload.action === "paid") {
-            task.status = "Оплачена";
+            if (task.stageMaterials?.paymentMeta?.required) {
+              task.status = "Ожидает подтверждения оплаты";
+            } else {
+              task.status = "Оплачена";
+            }
             task.timeline.paidAt = new Date().toISOString();
           } else {
             return sendJson(res, 400, { error: "Unknown action" });
