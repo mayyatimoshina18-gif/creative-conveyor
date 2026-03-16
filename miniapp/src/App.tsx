@@ -11,7 +11,10 @@ import {
   Clock3,
   Archive,
   CircleDot,
-  Users
+  Users,
+  CheckCircle2,
+  Circle,
+  Paperclip
 } from "lucide-react";
 
 type Task = {
@@ -40,9 +43,9 @@ type Task = {
   refsText?: string;
   comment?: string | null;
   stageMaterials?: {
-    thirty?: any;
-    sixty?: any;
-    final?: any;
+    thirty?: { type?: string; value?: string; createdAt?: string } | null;
+    sixty?: { type?: string; value?: string; createdAt?: string } | null;
+    final?: { type?: string; value?: string; createdAt?: string } | null;
   };
 };
 
@@ -134,6 +137,91 @@ function TaskCard({ task }: { task: Task }) {
         <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div><div>{task.price || "—"}</div></div>
       </div>
       <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
+    </div>
+  );
+}
+
+function StageValue({ material }: { material?: { value?: string; createdAt?: string } | null }) {
+  if (!material?.value) return <span className="text-white/40">не загружено</span>;
+  return (
+    <div className="flex items-center gap-2 text-white/80">
+      <Paperclip className="h-3.5 w-3.5 text-[#56FFEF]" />
+      <span className="truncate">{material.value}</span>
+    </div>
+  );
+}
+
+function TaskStageTimeline({
+  task,
+  compact = false
+}: {
+  task: Task;
+  compact?: boolean;
+}) {
+  const materials = task.stageMaterials || {};
+  const steps = [
+    {
+      key: "tz",
+      title: "Изучил ТЗ",
+      done: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(task.status || ""),
+      value: null as any
+    },
+    {
+      key: "30",
+      title: "30%",
+      done: Boolean(materials.thirty),
+      value: materials.thirty
+    },
+    {
+      key: "60",
+      title: "60%",
+      done: Boolean(materials.sixty),
+      value: materials.sixty
+    },
+    {
+      key: "final",
+      title: "Финал",
+      done: Boolean(materials.final) || ["На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(task.status || ""),
+      value: materials.final
+    }
+  ];
+
+  return (
+    <div className={cn("rounded-[24px] border border-white/8 bg-black/20", compact ? "p-3" : "p-4")}>
+      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">Этапы выполнения</div>
+      <div className="space-y-3">
+        {steps.map((step, index) => (
+          <div key={step.key} className="relative flex gap-3">
+            <div className="flex w-5 flex-col items-center">
+              {step.done ? (
+                <CheckCircle2 className="h-5 w-5 text-[#56FFEF]" />
+              ) : (
+                <Circle className="h-5 w-5 text-white/25" />
+              )}
+              {index !== steps.length - 1 ? (
+                <div className={cn("mt-1 w-px flex-1", step.done ? "bg-[#56FFEF]/40" : "bg-white/10")} />
+              ) : null}
+            </div>
+            <div className="min-w-0 flex-1 pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-white">{step.title}</div>
+                <div className={cn("text-xs", step.done ? "text-[#56FFEF]" : "text-white/40")}>
+                  {step.done ? "загружено" : "не загружено"}
+                </div>
+              </div>
+              {step.key === "tz" ? (
+                <div className="mt-1 text-sm text-white/45">
+                  {step.done ? "Исполнитель подтвердил ознакомление с ТЗ" : "Шаг ещё не подтверждён"}
+                </div>
+              ) : (
+                <div className="mt-1 text-sm">
+                  <StageValue material={step.value} />
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -602,6 +690,7 @@ export default function App() {
                                   <div>Референсы: {task.refsText || "—"}</div>
                                   <div>Комментарий: {task.comment || "—"}</div>
                                 </div>
+                                <TaskStageTimeline task={task} />
                                 {executorActionButtonLabel(task.status) ? <button onClick={() => void handleExecutorStageAction(task)} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">{executorActionButtonLabel(task.status)}</button> : null}
                               </>
                             )}
@@ -669,13 +758,17 @@ export default function App() {
                               ))}
                             </div>
                           ) : null}
+
                           {managerTaskTopTab === "active" ? (
-                            <div className="mt-4 space-y-2">
-                              <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять результат</button>
-                              <button onClick={() => void handleManagerStageAction(task.id, "fixes")} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отправить на правки</button>
-                              <div className="grid grid-cols-2 gap-2">
-                                <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
-                                <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/15 px-4 py-3 text-sm font-medium text-[#56FFEF]">Оплачена</button>
+                            <div className="mt-4 space-y-3">
+                              <TaskStageTimeline task={managerTask} />
+                              <div className="grid grid-cols-1 gap-2">
+                                <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять результат</button>
+                                <button onClick={() => void handleManagerStageAction(task.id, "fixes")} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отправить на правки</button>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
+                                  <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/15 px-4 py-3 text-sm font-medium text-[#56FFEF]">Оплачена</button>
+                                </div>
                               </div>
                             </div>
                           ) : null}
@@ -708,7 +801,7 @@ export default function App() {
                     <button onClick={() => void handleCreateTask()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Создать задачу</button>
                   </div>
                 ) : (
-                  <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Остальные менеджерские разделы оставь из текущей рабочей версии. Этот файл добавляет этапы задач.</div>
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Остальные менеджерские разделы оставь из текущей рабочей версии. Этот файл добавляет этапы задач и визуальный workflow.</div>
                 )}
               </div>
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
