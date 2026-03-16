@@ -1,22 +1,90 @@
-const http = require("http");
-const https = require("https");
-const { Pool } = require("pg");
+import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Briefcase,
+  Users,
+  Trophy,
+  Calculator,
+  PlusSquare,
+  ChevronRight,
+  Lock,
+  Search,
+  Clock3,
+  Archive,
+  CircleDot,
+  Pencil,
+  X,
+  CheckCircle2,
+  Circle,
+  LoaderCircle
+} from "lucide-react";
 
-const PORT = process.env.PORT || 3000;
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD;
-const DATABASE_URL = process.env.DATABASE_URL;
+type Task = {
+  id: number;
+  title: string;
+  type: string[];
+  deadline: string;
+  price: string;
+  manager: string;
+  status?: string;
+  assignedExecutorId?: number | null;
+  assignedExecutorName?: string | null;
+  assignedExecutorContact?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  myDecision?: string | null;
+  briefText?: string;
+  sourcesText?: string;
+  refsText?: string;
+  comment?: string | null;
+  stageMaterials?: {
+    thirty?: { value?: string; createdAt?: string } | null;
+    sixty?: { value?: string; createdAt?: string } | null;
+    final?: { value?: string; createdAt?: string } | null;
+    fixesNote?: { value?: string; createdAt?: string } | null;
+    invoice?: { value?: string; createdAt?: string } | null;
+  };
+  paymentMethod?: string | null;
+  paymentRequired?: boolean;
+  revisionCount?: number;
+  responsesCount?: number;
+  responses?: Array<{
+    executorId: number;
+    executorName: string;
+    executorContact: string;
+    decision: string;
+    rating?: number | null;
+    completedOrders?: number;
+  }>;
+};
 
-const REMINDER_DELAY_MS = 60 * 1000;
-const MAX_REMINDER_ATTEMPTS = 3;
+type TasksResponse = {
+  waiting: Task[];
+  active: Task[];
+  archived: Task[];
+};
 
-const waitingForManagerPassword = new Set();
-const managers = new Set();
-const userStates = new Map();
-const tasks = [];
-const executors = new Map();
-const managerContacts = new Map();
-const taskReminderState = new Map();
+type ExecutorProfile = {
+  telegramId?: number | null;
+  executorCode?: string | null;
+  username?: string | null;
+  telegramContact?: string | null;
+  fullName?: string | null;
+  specializations?: string[];
+  verifiedSpecializations?: string[];
+  portfolio?: string | null;
+  paymentMethod?: string | null;
+  paymentDetails?: { type?: string; value?: string } | string | null;
+  unavailableDays?: string[];
+  unavailableTime?: string | null;
+  status?: string | null;
+  approvedBy?: string | null;
+  approvedByManagerId?: number | null;
+  rating?: number | null;
+  completedOrders?: number;
+};
+
+const API_BASE = "https://creative-conveyor-backend.onrender.com";
 
 const SPECIALIZATION_OPTIONS = ["Статика", "Моушен", "Лендинги"];
 const DAY_OPTIONS = [
@@ -30,3809 +98,2433 @@ const DAY_OPTIONS = [
 ];
 const PAYMENT_OPTIONS = ["Самозанятость", "ИП", "Переводом"];
 
-function generateExecutorCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let result = "EX-";
+const topTabs = [
+  { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
+  { key: "active", label: "Активные", icon: Clock3 },
+  { key: "archived", label: "Архивные", icon: Archive }
+] as const;
 
-  for (let i = 0; i < 6; i += 1) {
-    result += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
+const bottomTabs = [
+  { key: "executors", label: "Исполнители", icon: Users },
+  { key: "tasks", label: "Задачи", icon: Briefcase },
+  { key: "create", label: "Создать", icon: PlusSquare },
+  { key: "calculator", label: "Калькулятор", icon: Calculator },
+  { key: "profile", label: "Профиль", icon: Trophy }
+];
 
-  return result;
+function cn(...classes: string[]) {
+  return classes.filter(Boolean).join(" ");
 }
 
-async function ensureExecutorCodeForProfile(profile) {
-  if (profile?.executorCode) {
-    return profile;
-  }
-
-  let executorCode = generateExecutorCode();
-  while (Array.from(executors.values()).some(item => item !== profile && item.executorCode === executorCode)) {
-    executorCode = generateExecutorCode();
-  }
-
-  profile.executorCode = executorCode;
-  profile.updatedAt = new Date().toISOString();
-
-  if (profile.telegramId) {
-    await saveExecutorToDb(profile);
-    executors.set(profile.telegramId, profile);
-  }
-
-  return profile;
+function BottomBadge({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-[#56FFEF] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-black">
+      {count > 99 ? "99+" : count}
+    </span>
+  );
 }
 
-
-const DATE_OPTION_VALUES = {
-  "Сегодня": 0,
-  "Завтра": 1,
-  "Послезавтра": 2
-};
-
-const TIME_OPTIONS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00"];
-
-let pool = null;
-
-/* -------------------- DB -------------------- */
-
-function createDbPool() {
-  if (!DATABASE_URL) {
-    console.log("DATABASE_URL is missing");
-    return null;
-  }
-
-  return new Pool({
-    connectionString: DATABASE_URL,
-    ssl: false
-  });
+function RoleButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-left text-lg font-medium text-white transition hover:bg-white/10 active:scale-[0.99]"
+    >
+      <div className="flex items-center justify-between">
+        <span>{label}</span>
+        <ChevronRight className="h-5 w-5 text-white/50" />
+      </div>
+    </button>
+  );
 }
 
-async function runQuery(text, params = []) {
-  if (!pool) {
-    throw new Error("Database pool is not initialized");
-  }
-  return pool.query(text, params);
+function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+  return (
+    <motion.button
+      type="button"
+      layout
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      transition={{ duration: 0.18 }}
+      onClick={onOpen}
+      className="w-full rounded-[28px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+          <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
+        </div>
+        <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+          {getCurrentStageLabel(task.status)}
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-2">
+        {(task.type || []).map((item) => (
+          <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+            {item}
+          </span>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+        <div className="rounded-2xl bg-black/20 p-3">
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div>
+          <div>{task.deadline || "—"}</div>
+        </div>
+        <div className="rounded-2xl bg-black/20 p-3">
+          <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div>
+          <div>{task.price || "—"}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
+    </motion.button>
+  );
 }
 
-async function initDb() {
-  pool = createDbPool();
-
-  if (!pool) {
-    console.log("Postgres is disabled because DATABASE_URL is missing");
-    return;
-  }
-
-  await runQuery(`
-    CREATE TABLE IF NOT EXISTS manager_contacts (
-      telegram_id BIGINT PRIMARY KEY,
-      contact TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await runQuery(`
-    CREATE TABLE IF NOT EXISTS executors (
-      telegram_id BIGINT PRIMARY KEY,
-      username TEXT,
-      telegram_contact TEXT NOT NULL,
-      executor_code TEXT UNIQUE,
-      full_name TEXT,
-      specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
-      verified_specializations JSONB NOT NULL DEFAULT '[]'::jsonb,
-      portfolio TEXT,
-      payment_method TEXT,
-      payment_details JSONB,
-      payment_file JSONB,
-      contract_data JSONB,
-      payment_invoices JSONB NOT NULL DEFAULT '[]'::jsonb,
-      unavailable_days JSONB NOT NULL DEFAULT '[]'::jsonb,
-      unavailable_time TEXT,
-      status TEXT,
-      approved_by TEXT,
-      approved_by_manager_id BIGINT,
-      review_accuracy INTEGER,
-      review_speed INTEGER,
-      review_aesthetics INTEGER,
-      base_rating INTEGER,
-      newcomer_boost INTEGER,
-      rating INTEGER,
-      response_history JSONB NOT NULL DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await runQuery(`
-    ALTER TABLE executors
-    ADD COLUMN IF NOT EXISTS executor_code TEXT
-  `);
-
-  await runQuery(`
-    ALTER TABLE executors
-    ADD COLUMN IF NOT EXISTS completed_orders INTEGER NOT NULL DEFAULT 0
-  `);
-
-  await runQuery(`
-    ALTER TABLE executors
-    ADD COLUMN IF NOT EXISTS contract_data JSONB
-  `);
-
-  await runQuery(`
-    ALTER TABLE executors
-    ADD COLUMN IF NOT EXISTS payment_invoices JSONB NOT NULL DEFAULT '[]'::jsonb
-  `);
-
-  await runQuery(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_executors_executor_code
-    ON executors(executor_code)
-  `);
-
-  await runQuery(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id BIGSERIAL PRIMARY KEY,
-      manager_id BIGINT NOT NULL,
-      manager_username TEXT,
-      manager_contact TEXT NOT NULL,
-      title TEXT,
-      categories JSONB NOT NULL DEFAULT '[]'::jsonb,
-      deadline_date TEXT,
-      deadline_time TEXT,
-      deadline TEXT,
-      price TEXT,
-      brief JSONB,
-      sources JSONB,
-      refs_data JSONB,
-      comment TEXT,
-      status TEXT,
-      published_at TIMESTAMPTZ,
-      assigned_executor_id BIGINT,
-      assigned_executor_name TEXT,
-      assigned_executor_contact TEXT,
-      stage_materials JSONB NOT NULL DEFAULT '{}'::jsonb,
-      timeline JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS brief JSONB
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS sources JSONB
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS refs_data JSONB
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS comment TEXT
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS assigned_executor_id BIGINT
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS assigned_executor_name TEXT
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS assigned_executor_contact TEXT
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS stage_materials JSONB NOT NULL DEFAULT '{}'::jsonb
-  `);
-
-  await runQuery(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS timeline JSONB NOT NULL DEFAULT '{}'::jsonb
-  `);
-
-  await runQuery(`
-    CREATE TABLE IF NOT EXISTS task_responses (
-      id BIGSERIAL PRIMARY KEY,
-      task_id BIGINT NOT NULL,
-      executor_id BIGINT NOT NULL,
-      executor_name TEXT NOT NULL,
-      executor_contact TEXT NOT NULL,
-      decision TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT fk_task_responses_task
-        FOREIGN KEY (task_id)
-        REFERENCES tasks(id)
-        ON DELETE CASCADE
-    )
-  `);
-
-  await runQuery(`
-    CREATE INDEX IF NOT EXISTS idx_task_responses_task_id
-    ON task_responses(task_id)
-  `);
-
-  await runQuery(`
-    CREATE INDEX IF NOT EXISTS idx_tasks_manager_id
-    ON tasks(manager_id)
-  `);
-
-  await runQuery(`
-    CREATE INDEX IF NOT EXISTS idx_tasks_assigned_executor_id
-    ON tasks(assigned_executor_id)
-  `);
-
-  console.log("Postgres connected and tables initialized");
+function FormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+    />
+  );
 }
 
-async function loadManagerContactsFromDb() {
-  const result = await runQuery(`
-    SELECT telegram_id, contact
-    FROM manager_contacts
-  `);
-
-  managerContacts.clear();
-
-  for (const row of result.rows) {
-    managerContacts.set(Number(row.telegram_id), row.contact);
-  }
+function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className="min-h-[110px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+    />
+  );
 }
 
-async function loadExecutorsFromDb() {
-  const result = await runQuery(`
-    SELECT *
-    FROM executors
-  `);
-
-  executors.clear();
-
-  for (const row of result.rows) {
-    executors.set(Number(row.telegram_id), {
-      telegramId: Number(row.telegram_id),
-      executorCode: row.executor_code,
-      username: row.username,
-      telegramContact: row.telegram_contact,
-      fullName: row.full_name,
-      specializations: row.specializations || [],
-      verifiedSpecializations: row.verified_specializations || [],
-      portfolio: row.portfolio,
-      paymentMethod: row.payment_method,
-      paymentDetails: row.payment_details,
-      paymentFile: row.payment_file,
-      contractData: row.contract_data,
-      paymentInvoices: row.payment_invoices || [],
-      unavailableDays: row.unavailable_days || [],
-      unavailableTime: row.unavailable_time || "",
-      status: row.status,
-      approvedBy: row.approved_by,
-      approvedByManagerId: row.approved_by_manager_id ? Number(row.approved_by_manager_id) : null,
-      reviewAccuracy: row.review_accuracy,
-      reviewSpeed: row.review_speed,
-      reviewAesthetics: row.review_aesthetics,
-      baseRating: row.base_rating,
-      newcomerBoost: row.newcomer_boost,
-      rating: row.rating,
-      completedOrders: row.completed_orders || 0,
-      responseHistory: row.response_history || [],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    });
-  }
+function getPaymentDetailsText(value: ExecutorProfile["paymentDetails"]) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value.value || "";
 }
 
-async function loadTasksFromDb() {
-  const tasksResult = await runQuery(`
-    SELECT *
-    FROM tasks
-    ORDER BY id ASC
-  `);
-
-  const responsesResult = await runQuery(`
-    SELECT *
-    FROM task_responses
-    ORDER BY id ASC
-  `);
-
-  const responsesByTaskId = new Map();
-
-  for (const row of responsesResult.rows) {
-    const taskId = Number(row.task_id);
-    if (!responsesByTaskId.has(taskId)) {
-      responsesByTaskId.set(taskId, []);
-    }
-
-    responsesByTaskId.get(taskId).push({
-      executorId: Number(row.executor_id),
-      executorName: row.executor_name,
-      executorContact: row.executor_contact,
-      decision: row.decision,
-      createdAt: row.created_at
-    });
-  }
-
-  tasks.length = 0;
-
-  for (const row of tasksResult.rows) {
-    tasks.push({
-      id: Number(row.id),
-      createdAt: row.created_at,
-      managerId: Number(row.manager_id),
-      managerUsername: row.manager_username,
-      managerContact: row.manager_contact,
-      title: row.title,
-      categories: row.categories || [],
-      deadlineDate: row.deadline_date || "",
-      deadlineTime: row.deadline_time || "",
-      deadline: row.deadline || "",
-      price: row.price || "",
-      brief: row.brief,
-      sources: row.sources,
-      refs_data: row.refs_data,
-      comment: row.comment,
-      status: row.status,
-      responses: responsesByTaskId.get(Number(row.id)) || [],
-      publishedAt: row.published_at,
-      assignedExecutorId: row.assigned_executor_id ? Number(row.assigned_executor_id) : null,
-      assignedExecutorName: row.assigned_executor_name,
-      assignedExecutorContact: row.assigned_executor_contact,
-      stageMaterials: row.stage_materials || {
-        thirty: null,
-        sixty: null,
-        final: null,
-        fixesNote: null,
-        fixesHistory: [],
-        thirtyHistory: [],
-        sixtyHistory: [],
-        finalHistory: []
-      },
-      timeline: row.timeline || {
-        assignedAt: null,
-        briefReadAt: null,
-        inWorkAt: null,
-        shown30At: null,
-        shown60At: null,
-        submittedAt: null,
-        approvedAt: null,
-        returnedForFixesAt: null,
-        unpaidAt: null,
-        paidAt: null
-      }
-    });
-  }
-}
-
-async function loadAllDataFromDb() {
-  await loadManagerContactsFromDb();
-  await loadExecutorsFromDb();
-  await loadTasksFromDb();
-  console.log("Data loaded from Postgres");
-}
-
-async function saveManagerContactToDb(telegramId, contact) {
-  await runQuery(`
-    INSERT INTO manager_contacts (telegram_id, contact, created_at, updated_at)
-    VALUES ($1, $2, NOW(), NOW())
-    ON CONFLICT (telegram_id)
-    DO UPDATE SET
-      contact = EXCLUDED.contact,
-      updated_at = NOW()
-  `, [telegramId, contact]);
-}
-
-async function saveExecutorToDb(profile) {
-  await runQuery(`
-    INSERT INTO executors (
-      telegram_id,
-      username,
-      telegram_contact,
-      executor_code,
-      full_name,
-      specializations,
-      verified_specializations,
-      portfolio,
-      payment_method,
-      payment_details,
-      payment_file,
-      contract_data,
-      payment_invoices,
-      unavailable_days,
-      unavailable_time,
-      status,
-      approved_by,
-      approved_by_manager_id,
-      review_accuracy,
-      review_speed,
-      review_aesthetics,
-      base_rating,
-      newcomer_boost,
-      rating,
-      completed_orders,
-      response_history,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb,
-      $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
-      $26::jsonb, $27, NOW()
-    )
-    ON CONFLICT (telegram_id)
-    DO UPDATE SET
-      username = EXCLUDED.username,
-      telegram_contact = EXCLUDED.telegram_contact,
-      executor_code = EXCLUDED.executor_code,
-      full_name = EXCLUDED.full_name,
-      specializations = EXCLUDED.specializations,
-      verified_specializations = EXCLUDED.verified_specializations,
-      portfolio = EXCLUDED.portfolio,
-      payment_method = EXCLUDED.payment_method,
-      payment_details = EXCLUDED.payment_details,
-      payment_file = EXCLUDED.payment_file,
-      contract_data = EXCLUDED.contract_data,
-      payment_invoices = EXCLUDED.payment_invoices,
-      unavailable_days = EXCLUDED.unavailable_days,
-      unavailable_time = EXCLUDED.unavailable_time,
-      status = EXCLUDED.status,
-      approved_by = EXCLUDED.approved_by,
-      approved_by_manager_id = EXCLUDED.approved_by_manager_id,
-      review_accuracy = EXCLUDED.review_accuracy,
-      review_speed = EXCLUDED.review_speed,
-      review_aesthetics = EXCLUDED.review_aesthetics,
-      base_rating = EXCLUDED.base_rating,
-      newcomer_boost = EXCLUDED.newcomer_boost,
-      rating = EXCLUDED.rating,
-      completed_orders = EXCLUDED.completed_orders,
-      response_history = EXCLUDED.response_history,
-      updated_at = NOW()
-  `, [
-    profile.telegramId,
-    profile.username || null,
-    profile.telegramContact,
-    profile.executorCode || null,
-    profile.fullName || null,
-    JSON.stringify(profile.specializations || []),
-    JSON.stringify(profile.verifiedSpecializations || []),
-    profile.portfolio || null,
-    profile.paymentMethod || null,
-    profile.paymentDetails ? JSON.stringify(profile.paymentDetails) : null,
-    profile.paymentFile ? JSON.stringify(profile.paymentFile) : null,
-    profile.contractData ? JSON.stringify(profile.contractData) : null,
-    JSON.stringify(profile.paymentInvoices || []),
-    JSON.stringify(profile.unavailableDays || []),
-    profile.unavailableTime || "",
-    profile.status || null,
-    profile.approvedBy || null,
-    profile.approvedByManagerId || null,
-    profile.reviewAccuracy ?? null,
-    profile.reviewSpeed ?? null,
-    profile.reviewAesthetics ?? null,
-    profile.baseRating ?? null,
-    profile.newcomerBoost ?? null,
-    profile.rating ?? null,
-    profile.completedOrders ?? 0,
-    JSON.stringify(profile.responseHistory || []),
-    profile.createdAt || new Date().toISOString()
-  ]);
-}
-
-async function saveTaskToDb(task) {
-  let realId = task.id;
-
-  if (!task.id) {
-    const insertResult = await runQuery(`
-      INSERT INTO tasks (
-        manager_id,
-        manager_username,
-        manager_contact,
-        title,
-        categories,
-        deadline_date,
-        deadline_time,
-        deadline,
-        price,
-        brief,
-        sources,
-        refs_data,
-        comment,
-        status,
-        published_at,
-        assigned_executor_id,
-        assigned_executor_name,
-        assigned_executor_contact,
-        stage_materials,
-        timeline,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb,
-        $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, NOW()
-      )
-      RETURNING id
-    `, [
-      task.managerId,
-      task.managerUsername || null,
-      task.managerContact,
-      task.title || null,
-      JSON.stringify(task.categories || []),
-      task.deadlineDate || null,
-      task.deadlineTime || null,
-      task.deadline || null,
-      task.price || null,
-      task.brief ? JSON.stringify(task.brief) : null,
-      task.sources ? JSON.stringify(task.sources) : null,
-      task.refs_data ? JSON.stringify(task.refs_data) : null,
-      task.comment || null,
-      task.status || null,
-      task.publishedAt || null,
-      task.assignedExecutorId || null,
-      task.assignedExecutorName || null,
-      task.assignedExecutorContact || null,
-      JSON.stringify(task.stageMaterials || {}),
-      JSON.stringify(task.timeline || {}),
-      task.createdAt || new Date().toISOString()
-    ]);
-
-    realId = Number(insertResult.rows[0].id);
-    task.id = realId;
-  } else {
-    await runQuery(`
-      UPDATE tasks
-      SET
-        manager_id = $2,
-        manager_username = $3,
-        manager_contact = $4,
-        title = $5,
-        categories = $6::jsonb,
-        deadline_date = $7,
-        deadline_time = $8,
-        deadline = $9,
-        price = $10,
-        brief = $11::jsonb,
-        sources = $12::jsonb,
-        refs_data = $13::jsonb,
-        comment = $14,
-        status = $15,
-        published_at = $16,
-        assigned_executor_id = $17,
-        assigned_executor_name = $18,
-        assigned_executor_contact = $19,
-        stage_materials = $20::jsonb,
-        timeline = $21::jsonb,
-        updated_at = NOW()
-      WHERE id = $1
-    `, [
-      task.id,
-      task.managerId,
-      task.managerUsername || null,
-      task.managerContact,
-      task.title || null,
-      JSON.stringify(task.categories || []),
-      task.deadlineDate || null,
-      task.deadlineTime || null,
-      task.deadline || null,
-      task.price || null,
-      task.brief ? JSON.stringify(task.brief) : null,
-      task.sources ? JSON.stringify(task.sources) : null,
-      task.refs_data ? JSON.stringify(task.refs_data) : null,
-      task.comment || null,
-      task.status || null,
-      task.publishedAt || null,
-      task.assignedExecutorId || null,
-      task.assignedExecutorName || null,
-      task.assignedExecutorContact || null,
-      JSON.stringify(task.stageMaterials || {}),
-      JSON.stringify(task.timeline || {})
-    ]);
-  }
-
-  await runQuery(`DELETE FROM task_responses WHERE task_id = $1`, [realId]);
-
-  for (const response of task.responses || []) {
-    await runQuery(`
-      INSERT INTO task_responses (
-        task_id,
-        executor_id,
-        executor_name,
-        executor_contact,
-        decision,
-        created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6)
-    `, [
-      realId,
-      response.executorId,
-      response.executorName,
-      response.executorContact,
-      response.decision,
-      response.createdAt || new Date().toISOString()
-    ]);
-  }
-}
-
-/* -------------------- Telegram utils -------------------- */
-
-function sendTelegramRequest(method, payload, callback) {
-  if (!BOT_TOKEN) {
-    console.log("BOT_TOKEN is missing");
-    return;
-  }
-
-  const data = JSON.stringify(payload);
-
-  const options = {
-    hostname: "api.telegram.org",
-    path: `/bot${BOT_TOKEN}/${method}`,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(data)
-    }
-  };
-
-  const req = https.request(options, res => {
-    let body = "";
-
-    res.on("data", chunk => {
-      body += chunk.toString();
-    });
-
-    res.on("end", () => {
-      console.log(`${method} response:`, body);
-      if (callback) callback(body);
-    });
-  });
-
-  req.on("error", error => {
-    console.error(`${method} error:`, error);
-  });
-
-  req.write(data);
-  req.end();
-}
-
-function sendMessage(chatId, text, replyMarkup = null) {
-  const payload = { chat_id: chatId, text };
-
-  if (replyMarkup) {
-    payload.reply_markup = replyMarkup;
-  }
-
-  sendTelegramRequest("sendMessage", payload);
-}
-
-function sendDocument(chatId, fileId, caption) {
-  sendTelegramRequest("sendDocument", {
-    chat_id: chatId,
-    document: fileId,
-    caption
-  });
-}
-
-function answerCallback(callbackQueryId, text) {
-  sendTelegramRequest("answerCallbackQuery", {
-    callback_query_id: callbackQueryId,
-    text
-  });
-}
-
-/* -------------------- Keyboards -------------------- */
-
-function getMainKeyboard(isManager = false, isExecutorRegistered = false) {
-  if (isManager) {
+function getPaymentPrompt(paymentMethod: string) {
+  if (paymentMethod === "Переводом") {
     return {
-      keyboard: [
-        [{ text: "Создать задачу" }],
-        [{ text: "Мои задачи" }],
-        [{ text: "Отклики последней задачи" }],
-        [{ text: "Заявки в исполнители" }],
-        [{ text: "Я исполнитель" }]
-      ],
-      resize_keyboard: true
+      label: "Реквизиты для выплаты",
+      placeholder: "Номер телефона или номер карты",
+      helper: "Укажи номер телефона или карты для перевода."
     };
   }
 
-  if (isExecutorRegistered) {
+  if (paymentMethod === "ИП") {
     return {
-      keyboard: [
-        [{ text: "Моя анкета" }],
-        [{ text: "Редактировать анкету" }],
-        [{ text: "Новые задачи" }],
-        [{ text: "Мои отклики" }],
-        [{ text: "Я менеджер" }]
-      ],
-      resize_keyboard: true
+      label: "Данные ИП",
+      placeholder: "ИНН ИП и ФИО",
+      helper: "Укажи ИНН ИП и ФИО."
+    };
+  }
+
+  if (paymentMethod === "Самозанятость") {
+    return {
+      label: "Данные самозанятости",
+      placeholder: "ИНН и ФИО",
+      helper: "Укажи ИНН и ФИО."
     };
   }
 
   return {
-    keyboard: [
-      [{ text: "Я исполнитель" }],
-      [{ text: "Я менеджер" }]
-    ],
-    resize_keyboard: true
+    label: "Реквизиты",
+    placeholder: "Реквизиты для выплаты",
+    helper: ""
   };
 }
 
-function getSkipKeyboard() {
-  return {
-    keyboard: [[{ text: "Пропустить" }]],
-    resize_keyboard: true
-  };
+
+function normalizeInvoiceList(value: ExecutorProfile["paymentInvoices"]) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      value: typeof item === "string" ? item : String(item?.value || "").trim(),
+      createdAt:
+        typeof item === "string"
+          ? new Date().toISOString()
+          : String(item?.createdAt || new Date().toISOString())
+    }))
+    .filter((item) => item.value);
 }
 
-function getDoneKeyboard(items) {
-  return {
-    keyboard: [
-      items.map(item => ({ text: item })),
-      [{ text: "Готово" }]
-    ],
-    resize_keyboard: true
-  };
+function formatDateLabel(value?: string) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("ru-RU");
 }
 
-function getPaymentKeyboard() {
-  return {
-    keyboard: [PAYMENT_OPTIONS.map(item => ({ text: item }))],
-    resize_keyboard: true
-  };
+
+function getCurrentStageLabel(status?: string | null) {
+  if (!status) return "Не определён";
+  if (status === "Ждёт исполнителя" || status === "Есть отклики" || status === "Создана") return "Ожидает исполнителя";
+  if (status === "Назначена") return "Изучение ТЗ";
+  if (status === "ТЗ изучено") return "Взял в работу";
+  if (status === "В работе") return "Подготовка 30%";
+  if (status === "30%") return "Подготовка 60%";
+  if (status === "60%") return "Финальная сдача";
+  if (status === "Правки") return "Исправление правок";
+  if (status === "На проверке") return "Проверка менеджером";
+  if (status === "Ожидает счёт") return "Ожидается счёт";
+  if (status === "Счёт загружен") return "Оплата менеджером";
+  if (status === "Ожидает подтверждения оплаты") return "Подтверждение оплаты";
+  if (status === "Выполнена" || status === "Не оплачена") return "Ожидает оплату";
+  if (status === "Оплачена") return "Завершено";
+  return status;
 }
 
-function getModerationKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "Подтвердить исполнителя" }],
-      [{ text: "Отклонить исполнителя" }],
-      [{ text: "Следующая заявка" }],
-      [{ text: "В меню менеджера" }]
-    ],
-    resize_keyboard: true
-  };
-}
-
-function getTaskAfterCreateKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "Опубликовать последнюю задачу" }],
-      [{ text: "Отклики последней задачи" }],
-      [{ text: "Мои задачи" }],
-      [{ text: "В меню менеджера" }]
-    ],
-    resize_keyboard: true
-  };
-}
-
-function getDateKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "Сегодня" }, { text: "Завтра" }, { text: "Послезавтра" }],
-      [{ text: "Ввести дату вручную" }]
-    ],
-    resize_keyboard: true
-  };
-}
-
-function getTimeKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "10:00" }, { text: "12:00" }, { text: "14:00" }],
-      [{ text: "16:00" }, { text: "18:00" }, { text: "20:00" }],
-      [{ text: "Ввести время вручную" }]
-    ],
-    resize_keyboard: true
-  };
-}
-
-function getExecutorTaskActionKeyboard(task) {
-  let row = null;
-
-  if (task.status === "Назначена") {
-    row = [`Действие по задаче #${task.id}: Изучил ТЗ`];
-  } else if (task.status === "ТЗ изучено") {
-    row = [`Действие по задаче #${task.id}: Взял в работу`];
-  } else if (task.status === "Правки") {
-    row = [`Действие по задаче #${task.id}: Сдать задачу`];
-  }
-
-  const keyboard = [];
-  if (row) keyboard.push(row.map(text => ({ text })));
-  keyboard.push([{ text: "Мои отклики" }]);
-  keyboard.push([{ text: "Моя анкета" }]);
-
-  return {
-    keyboard,
-    resize_keyboard: true
-  };
-}
-
-function getManagerReviewTaskKeyboard(taskId) {
-  return {
-    keyboard: [
-      [{ text: `Принять результат #${taskId}` }],
-      [{ text: `Отправить на правки #${taskId}` }],
-      [{ text: `Отметить не оплачена #${taskId}` }],
-      [{ text: `Отметить оплачена #${taskId}` }],
-      [{ text: "Мои задачи" }]
-    ],
-    resize_keyboard: true
-  };
-}
-
-/* -------------------- Validation / format -------------------- */
-
-function getRawManagerContact(from) {
-  if (from?.username) return `@${from.username}`;
-  return null;
-}
-
-function getManagerContact(fromOrId) {
-  if (typeof fromOrId === "object" && fromOrId?.username) return `@${fromOrId.username}`;
-  const id = typeof fromOrId === "object" ? fromOrId?.id : fromOrId;
-  return managerContacts.get(id) || `id: ${id || "unknown"}`;
-}
-
-function getExecutorContactFromProfile(profile) {
-  return profile.telegramContact || `id: ${profile.telegramId}`;
-}
-
-function extractInput(message) {
-  if (message.document) {
-    return {
-      type: "document",
-      file_id: message.document.file_id,
-      file_name: message.document.file_name || null,
-      mime_type: message.document.mime_type || null,
-      caption: message.caption || ""
-    };
-  }
-
-  if (message.text) {
-    return {
-      type: "text",
-      value: message.text
-    };
-  }
-
-  return null;
-}
-
-function normalizePhone(value) {
-  return value.replace(/[^\d+]/g, "");
-}
-
-function normalizeCard(value) {
-  return value.replace(/\D/g, "");
-}
-
-function isValidPhone(value) {
-  const normalized = normalizePhone(value);
-  return /^(\+7\d{10}|8\d{10})$/.test(normalized);
-}
-
-function isValidCard(value) {
-  const normalized = normalizeCard(value);
-  return /^\d{16}$/.test(normalized);
-}
-
-function isValidTelegramContact(value) {
-  const trimmed = String(value || "").trim();
-  const usernameRegex = /^@[A-Za-z0-9_]{5,32}$/;
-  return usernameRegex.test(trimmed) || isValidPhone(trimmed);
-}
-
-function isValidFullName(value) {
-  if (!value) return false;
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  return parts.length >= 2 && parts.every(part => part.length >= 2);
-}
-
-function isValidTransferDetails(value) {
-  return isValidPhone(value) || isValidCard(value);
-}
-
-function isValidUnavailableTime(value) {
-  if (!value || !value.trim()) return false;
-
-  const lines = value
-    .split("\n")
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return false;
-
-  const dayPattern = DAY_OPTIONS.join("|");
-  const regex = new RegExp(`^(${dayPattern})\\s\\d{2}:\\d{2}-\\d{2}:\\d{2}$`);
-
-  return lines.every(line => regex.test(line));
-}
-
-function isValidManualDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
-}
-
-function isValidManualTime(value) {
-  return /^\d{2}:\d{2}$/.test(value.trim());
-}
-
-function formatField(field, label = "Материал") {
-  if (!field) return "—";
-
-  if (field.type === "text") return field.value || "—";
-
-  if (field.type === "document") {
-    if (field.caption && field.caption.trim()) {
-      return `${label} прикреплено файлом.\nКомментарий: ${field.caption}`;
-    }
-    return `${label} прикреплено файлом.`;
-  }
-
-  return "—";
-}
-
-function formatCategories(categories) {
-  if (!categories || !categories.length) return "—";
-  return categories.join(", ");
-}
-
-function formatTaskCard(task) {
-  const assignedLine = task.assignedExecutorName
-    ? `Исполнитель: ${task.assignedExecutorName} (${task.assignedExecutorContact || "—"})`
-    : "Исполнитель: —";
-
+function getPipelineSteps(task: Task) {
+  const status = task.status || "";
+  const materials = task.stageMaterials || {};
   return [
-    `Задача #${task.id}`,
-    "",
-    `Название: ${task.title || "—"}`,
-    `Категории: ${formatCategories(task.categories)}`,
-    `Дедлайн: ${task.deadline || "—"}`,
-    `Стоимость: ${task.price || "—"}`,
-    `Статус: ${task.status || "—"}`,
-    assignedLine,
-    "",
-    "ТЗ:",
-    formatField(task.brief, "ТЗ"),
-    "",
-    "Источники:",
-    formatField(task.sources, "Источники"),
-    "",
-    "Референсы:",
-    formatField(task.refs_data, "Референсы"),
-    "",
-    "Комментарий:",
-    task.comment || "—",
-    "",
-    `Менеджер: ${task.managerContact}`
-  ].join("\n");
+    {
+      key: "brief",
+      title: "Изучил ТЗ",
+      state: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+        ? "done"
+        : status === "Назначена"
+        ? "active"
+        : "upcoming",
+      meta: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+        ? "Подтверждено исполнителем"
+        : status === "Назначена"
+        ? "Текущий этап"
+        : "Ещё не начато"
+    },
+    {
+      key: "30",
+      title: "30%",
+      state: status === "В работе" ? "active" : materials.thirty || ["30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.thirty?.value || (status === "В работе" ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "60",
+      title: "60%",
+      state: status === "30%" ? "active" : materials.sixty || ["60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.sixty?.value || (status === "30%" ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "final",
+      title: "Финал",
+      state: status === "60%" || status === "Правки" ? "active" : materials.final || ["На проверке", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.final?.value || ((status === "60%" || status === "Правки") ? "Текущий этап" : "Материал не загружен")
+    },
+    {
+      key: "review",
+      title: "Проверка менеджером",
+      state: status === "На проверке" ? "active" : ["Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: status === "На проверке" ? "Менеджер проверяет результат" : "Ещё не начато"
+    },
+    {
+      key: "payment",
+      title: "Оплата",
+      state: status === "Выполнена" || status === "Не оплачена" ? "active" : status === "Оплачена" ? "done" : "upcoming",
+      meta: status === "Оплачена" ? "Оплачено" : status === "Выполнена" || status === "Не оплачена" ? "Ожидает оплату" : "Ещё не начато"
+    }
+  ] as const;
 }
 
-function formatExecutorProfile(profile) {
-  return [
-    "Анкета исполнителя",
-    "",
-    `ID исполнителя: ${profile.executorCode || "—"}`,
-    `Имя: ${profile.fullName || "—"}`,
-    `Контакт: ${profile.telegramContact || "—"}`,
-    `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
-    `Подтверждённые специализации: ${profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : "—"}`,
-    `Портфолио: ${profile.portfolio || "—"}`,
-    `Способ выплаты: ${profile.paymentMethod || "—"}`,
-    `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
-    `Договор: ${formatField(profile.contractData, "Договор")}`,
-    `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
-    `Недоступное время: ${profile.unavailableTime || "—"}`,
-    `Статус: ${profile.status || "—"}`,
-    `Подтвердил менеджер: ${profile.approvedBy || "—"}`,
-    `Оценка по ТЗ: ${typeof profile.reviewAccuracy === "number" ? profile.reviewAccuracy : "—"}`,
-    `Оценка скорости: ${typeof profile.reviewSpeed === "number" ? profile.reviewSpeed : "—"}`,
-    `Оценка эстетики: ${typeof profile.reviewAesthetics === "number" ? profile.reviewAesthetics : "—"}`,
-    `Базовый рейтинг: ${typeof profile.baseRating === "number" ? profile.baseRating : "—"}`,
-    `Буст новичка: ${typeof profile.newcomerBoost === "number" ? `+${profile.newcomerBoost}` : "—"}`,
-    `Итоговый рейтинг: ${typeof profile.rating === "number" ? profile.rating : "—"}`
-  ].join("\n");
+function PipelineView({ task, compact = false }: { task: Task; compact?: boolean }) {
+  const steps = getPipelineSteps(task);
+
+  return (
+    <div className={cn("rounded-[24px] border border-white/8 bg-black/20", compact ? "p-3" : "p-4")}>
+      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">Pipeline задачи</div>
+      <div className="space-y-3">
+        {steps.map((step, index) => {
+          const active = step.state === "active";
+          const done = step.state === "done";
+          return (
+            <div key={step.key} className="relative flex gap-3">
+              <div className="flex w-5 flex-col items-center">
+                {done ? <CheckCircle2 className="h-5 w-5 text-[#56FFEF]" /> : active ? <LoaderCircle className="h-5 w-5 animate-spin text-[#56FFEF]" /> : <Circle className="h-5 w-5 text-white/25" />}
+                {index !== steps.length - 1 ? <div className={cn("mt-1 w-px flex-1", done || active ? "bg-[#56FFEF]/40" : "bg-white/10")} /> : null}
+              </div>
+              <div className="min-w-0 flex-1 pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className={cn("text-sm font-medium", active ? "text-[#56FFEF]" : "text-white")}>{step.title}</div>
+                  <div className={cn("text-[11px] uppercase tracking-[0.12em]", done ? "text-[#56FFEF]" : active ? "text-[#56FFEF]" : "text-white/35")}>
+                    {done ? "готово" : active ? "текущий" : "далее"}
+                  </div>
+                </div>
+                <div className="mt-1 text-sm text-white/45 break-words">{step.meta}</div>
+              </div>
+            </div>
+          );
+        })}
+
+      </div>
+    </div>
+  );
 }
 
-function calculateBaseRating(accuracy, speed, aesthetics) {
-  const startScore = accuracy * 0.5 + speed * 0.35 + aesthetics * 0.15;
-  return Math.round(startScore * 20);
+function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => void }) {
+  if (!task) return null;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3">
+      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[32px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
+            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{task.title}</div>
+          </div>
+          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mb-4 inline-flex rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
+          Текущий этап: {getCurrentStageLabel(task.status)}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div><div>{task.deadline || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div><div>{task.price || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{task.status || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнитель</div><div>{task.assignedExecutorName || "—"}</div></div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ТЗ</div><div><RenderTextOrLink value={task.briefText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Источники</div><div><RenderTextOrLink value={task.sourcesText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div><RenderTextOrLink value={task.refsText || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div><RenderTextOrLink value={task.comment || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Куда отгружать</div><div><RenderTextOrLink value={task.deliveryTarget || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние правки менеджера</div><div><RenderTextOrLink value={task.stageMaterials?.fixesNote?.value || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div><RenderTextOrLink value={task.stageMaterials?.invoice?.value || "—"} /></div></div>
+        </div>
+
+        <div className="mt-4">
+          <PipelineView task={task} />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <HistoryList title="История правок" items={task.stageMaterials?.fixesHistory || (task.stageMaterials?.fixesNote ? [task.stageMaterials.fixesNote] : [])} />
+          <HistoryList title="История сдач 30%" items={task.stageMaterials?.thirtyHistory || (task.stageMaterials?.thirty ? [task.stageMaterials.thirty] : [])} />
+          <HistoryList title="История сдач 60%" items={task.stageMaterials?.sixtyHistory || (task.stageMaterials?.sixty ? [task.stageMaterials.sixty] : [])} />
+          <HistoryList title="История финальных сдач" items={task.stageMaterials?.finalHistory || (task.stageMaterials?.final ? [task.stageMaterials.final] : [])} />
+        </div>
+
+        {task.status === "На проверке" ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+            <div className="text-sm text-white/45 self-center text-right">Используй кнопки под карточкой задачи</div>
+          </div>
+        ) : null}
+
+      </div>
+    </div>
+  );
 }
 
-function calculateNewcomerBoost(baseRating) {
-  if (baseRating >= 85) return 8;
-  if (baseRating >= 75) return 7;
-  if (baseRating >= 65) return 6;
-  return 5;
-}
 
-function getResponseRecommendation(executor) {
-  const rating = typeof executor.rating === "number" ? executor.rating : 0;
-  if (rating >= 95) return { label: "Очень рекомендуется", score: rating + 5 };
-  if (rating >= 85) return { label: "Рекомендуется", score: rating + 3 };
-  if (rating >= 75) return { label: "Подходит", score: rating + 1 };
-  return { label: "Ниже приоритета", score: rating };
-}
+export default function App() {
+  const [screen, setScreen] = useState<
+    | "welcome"
+    | "managerPassword"
+    | "managerApp"
+    | "executorLoading"
+    | "executorRegister"
+    | "executorForm"
+    | "executorCodeLogin"
+    | "executorPending"
+    | "executorApp"
+  >("welcome");
 
-/* -------------------- Helpers -------------------- */
+  const [executor, setExecutor] = useState<ExecutorProfile | null>(null);
+  const [executorCode, setExecutorCode] = useState("");
+  const [executorError, setExecutorError] = useState("");
+  const [executorInfo, setExecutorInfo] = useState("");
 
-function getConfirmedExecutorsForCategories(categories) {
-  return Array.from(executors.values()).filter(profile => {
-    return (
-      profile.status === "Подтверждён" &&
-      profile.verifiedSpecializations?.some(spec => categories.includes(spec))
-    );
-  });
-}
+  const [executorFullName, setExecutorFullName] = useState("");
+  const [executorContact, setExecutorContact] = useState("");
+  const [executorSpecializations, setExecutorSpecializations] = useState<string[]>([]);
+  const [executorPortfolio, setExecutorPortfolio] = useState("");
+  const [executorPaymentMethod, setExecutorPaymentMethod] = useState("");
+  const [executorPaymentDetails, setExecutorPaymentDetails] = useState("");
+  const [executorUnavailableDays, setExecutorUnavailableDays] = useState<string[]>([]);
+  const [executorUnavailableTime, setExecutorUnavailableTime] = useState("");
+  const [executorFormError, setExecutorFormError] = useState("");
+  const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
+  const [isExecutorEditing, setIsExecutorEditing] = useState(false);
+  const [executorBottomTab, setExecutorBottomTab] = useState<"tasks" | "profile">("tasks");
+  const [executorTaskTopTab, setExecutorTaskTopTab] = useState<"new" | "active" | "archived">("new");
+  const [executorTasks, setExecutorTasks] = useState<{ available: Task[]; active: Task[]; archived: Task[] }>({ available: [], active: [], archived: [] });
+  const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
+  const [executorTasksError, setExecutorTasksError] = useState("");
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [stageTaskId, setStageTaskId] = useState<number | null>(null);
+  const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
+  const [stageValue, setStageValue] = useState("");
+  const [stageError, setStageError] = useState("");
+  const [stageLoading, setStageLoading] = useState(false);
+  const [fixesTaskId, setFixesTaskId] = useState<number | null>(null);
+  const [fixesValue, setFixesValue] = useState("");
+  const [fixesError, setFixesError] = useState("");
+  const [fixesLoading, setFixesLoading] = useState(false);
 
-function getPendingExecutors() {
-  return Array.from(executors.values()).filter(profile => profile.status === "На модерации");
-}
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [activeTopTab, setActiveTopTab] = useState<"waiting" | "active" | "archived">("waiting");
+  const [activeBottomTab, setActiveBottomTab] = useState("tasks");
 
-function getApprovedExecutors() {
-  return Array.from(executors.values()).filter(profile => profile.status === "Подтверждён");
-}
-
-function serializeExecutorProfile(profile) {
-  return {
-    telegramId: profile.telegramId,
-    executorCode: profile.executorCode || null,
-    username: profile.username || null,
-    telegramContact: profile.telegramContact || null,
-    fullName: profile.fullName || null,
-    specializations: profile.specializations || [],
-    verifiedSpecializations: profile.verifiedSpecializations || [],
-    portfolio: profile.portfolio || null,
-    paymentMethod: profile.paymentMethod || null,
-    paymentDetails: profile.paymentDetails || null,
-    contractData: profile.contractData || null,
-    paymentInvoices: profile.paymentInvoices || [],
-    unavailableDays: profile.unavailableDays || [],
-    unavailableTime: profile.unavailableTime || "",
-    status: profile.status || null,
-    approvedBy: profile.approvedBy || null,
-    approvedByManagerId: profile.approvedByManagerId || null,
-    reviewAccuracy: profile.reviewAccuracy ?? null,
-    reviewSpeed: profile.reviewSpeed ?? null,
-    reviewAesthetics: profile.reviewAesthetics ?? null,
-    baseRating: profile.baseRating ?? null,
-    newcomerBoost: profile.newcomerBoost ?? null,
-    rating: profile.rating ?? null,
-    completedOrders: profile.completedOrders ?? 0,
-    responseHistory: profile.responseHistory || []
-  };
-}
-
-function findExecutorByTelegramId(telegramId) {
-  const profile = executors.get(telegramId);
-  if (!profile) return null;
-  return { chatId: telegramId, profile };
-}
-
-function getLastManagerTask(managerId) {
-  const managerTasks = tasks.filter(task => task.managerId === managerId);
-  if (!managerTasks.length) return null;
-  return managerTasks[managerTasks.length - 1];
-}
-
-function getAcceptedResponses(task) {
-  return (task.responses || []).filter(item => item.decision === "Принял");
-}
-
-function notifyTaskMaterials(chatId, task) {
-  if (task.brief?.type === "document") {
-    sendDocument(chatId, task.brief.file_id, "Файл ТЗ");
-  }
-  if (task.sources?.type === "document") {
-    sendDocument(chatId, task.sources.file_id, "Файл с источниками");
-  }
-  if (task.refs_data?.type === "document") {
-    sendDocument(chatId, task.refs_data.file_id, "Файл с референсами");
-  }
-}
-
-/* -------------------- API -------------------- */
-
-function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  });
-  res.end(JSON.stringify(payload));
-}
-
-function mapTaskForMiniapp(task) {
-  return {
-    id: task.id,
-    title: task.title || "",
-    type: task.categories || [],
-    deadline: task.deadline || "",
-    price: task.price || "",
-    manager: task.managerContact || "—",
-    status: task.status || "",
-    assignedExecutorId: task.assignedExecutorId || null,
-    assignedExecutorName: task.assignedExecutorName || null,
-    assignedExecutorContact: task.assignedExecutorContact || null,
-    publishedAt: task.publishedAt || null,
-    createdAt: task.createdAt || null,
-    comment: task.comment || "",
-    briefText: task.brief?.type === "text" ? task.brief.value : task.brief?.caption || "",
-    sourcesText: task.sources?.type === "text" ? task.sources.value : task.sources?.caption || "",
-    refsText: task.refs_data?.type === "text" ? task.refs_data.value : task.refs_data?.caption || "",
-    deliveryTarget: task.deliveryTarget || "",
-    stageMaterials: task.stageMaterials || {}
-  };
-}
-
-function getMiniappTasksGrouped() {
-  const grouped = {
+  const [tasksData, setTasksData] = useState<TasksResponse>({
     waiting: [],
     active: [],
     archived: []
-  };
-
-  for (const task of tasks) {
-    const mappedTask = mapTaskForMiniapp(task);
-    const status = String(task.status || "");
-
-    if (
-      status === "Ждёт исполнителя" ||
-      status === "Есть отклики" ||
-      status === "Создана"
-    ) {
-      grouped.waiting.push(mappedTask);
-      continue;
-    }
-
-    if (
-      status === "Назначена" ||
-      status === "ТЗ изучено" ||
-      status === "В работе" ||
-      status === "30%" ||
-      status === "60%" ||
-      status === "На проверке" ||
-      status === "Правки" ||
-      status === "Не оплачена"
-    ) {
-      grouped.active.push(mappedTask);
-      continue;
-    }
-
-    if (
-      status === "Выполнена" ||
-      status === "Оплачена"
-    ) {
-      grouped.archived.push(mappedTask);
-      continue;
-    }
-
-    grouped.waiting.push(mappedTask);
-  }
-
-  return grouped;
-}
-
-/* -------------------- Reminders -------------------- */
-
-function clearTaskReminder(taskId) {
-  const state = taskReminderState.get(taskId);
-  if (state?.timeoutId) clearTimeout(state.timeoutId);
-  taskReminderState.delete(taskId);
-}
-
-function scheduleTaskReminder(taskId, stageKey) {
-  clearTaskReminder(taskId);
-
-  const state = {
-    stageKey,
-    attempts: 0,
-    timeoutId: null
-  };
-
-  taskReminderState.set(taskId, state);
-
-  function tick() {
-    const task = tasks.find(t => t.id === taskId);
-    const reminderState = taskReminderState.get(taskId);
-
-    if (!task || !reminderState || reminderState.stageKey !== stageKey) return;
-
-    if (shouldStopReminder(task, stageKey)) {
-      clearTaskReminder(taskId);
-      return;
-    }
-
-    reminderState.attempts += 1;
-
-    if (reminderState.attempts > MAX_REMINDER_ATTEMPTS) {
-      sendMessage(
-        task.managerId,
-        `Исполнитель не подтвердил этап "${getStageLabel(stageKey)}" по задаче #${task.id} после ${MAX_REMINDER_ATTEMPTS} напоминаний.`,
-        getManagerReviewTaskKeyboard(task.id)
-      );
-      clearTaskReminder(taskId);
-      return;
-    }
-
-    sendStageReminder(task, stageKey, reminderState.attempts);
-    reminderState.timeoutId = setTimeout(tick, REMINDER_DELAY_MS);
-  }
-
-  state.timeoutId = setTimeout(tick, REMINDER_DELAY_MS);
-}
-
-function shouldStopReminder(task, stageKey) {
-  if (stageKey === "read") return task.status !== "Назначена";
-  if (stageKey === "inwork") return task.status !== "ТЗ изучено";
-  if (stageKey === "30") return task.status !== "В работе";
-  if (stageKey === "60") return task.status !== "30%";
-  if (stageKey === "final") return !(task.status === "60%" || task.status === "Правки");
-  return true;
-}
-
-function getStageLabel(stageKey) {
-  if (stageKey === "read") return "Ознакомился с ТЗ";
-  if (stageKey === "inwork") return "Взял в работу";
-  if (stageKey === "30") return "30%";
-  if (stageKey === "60") return "60%";
-  if (stageKey === "final") return "Всё готово";
-  return stageKey;
-}
-
-function sendStageReminder(task, stageKey, attempt) {
-  let text = "";
-  let inline_keyboard = [];
-
-  if (stageKey === "read") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nОзнакомился ли ты с ТЗ по задаче #${task.id}?`;
-    inline_keyboard = [[
-      { text: "Да", callback_data: `stage_read_yes_${task.id}` },
-      { text: "Нет", callback_data: `stage_read_no_${task.id}` }
-    ]];
-  } else if (stageKey === "inwork") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВзял ли ты в работу задачу #${task.id}?`;
-    inline_keyboard = [[
-      { text: "Да", callback_data: `stage_inwork_yes_${task.id}` },
-      { text: "Нет", callback_data: `stage_inwork_no_${task.id}` }
-    ]];
-  } else if (stageKey === "30") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 30% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
-    inline_keyboard = [[
-      { text: "Да, отправлю материал", callback_data: `stage_30_yes_${task.id}` },
-      { text: "Ещё нет", callback_data: `stage_30_no_${task.id}` }
-    ]];
-  } else if (stageKey === "60") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nГотовы ли 60% по задаче #${task.id}? Если да — отправь ссылку, текст или файл.`;
-    inline_keyboard = [[
-      { text: "Да, отправлю материал", callback_data: `stage_60_yes_${task.id}` },
-      { text: "Ещё нет", callback_data: `stage_60_no_${task.id}` }
-    ]];
-  } else if (stageKey === "final") {
-    text = `Напоминание ${attempt}/${MAX_REMINDER_ATTEMPTS}\n\nВсё ли готово по задаче #${task.id}? Если да — отправь финальный материал ссылкой, текстом или файлом.`;
-    inline_keyboard = [[
-      { text: "Да, отправлю финал", callback_data: `stage_final_yes_${task.id}` },
-      { text: "Ещё нет", callback_data: `stage_final_no_${task.id}` }
-    ]];
-  }
-
-  sendMessage(task.assignedExecutorId, text, { inline_keyboard });
-}
-
-/* -------------------- Task creation -------------------- */
-
-function startTaskCreation(chatId, from) {
-  userStates.set(chatId, {
-    type: "create_task",
-    step: "title",
-    task: {
-      id: null,
-      createdAt: new Date().toISOString(),
-      managerId: from?.id || null,
-      managerUsername: from?.username || null,
-      managerContact: getManagerContact(from),
-      title: "",
-      categories: [],
-      deadlineDate: "",
-      deadlineTime: "",
-      deadline: "",
-      price: "",
-      brief: null,
-      sources: null,
-      refs_data: null,
-      comment: null,
-      status: "Создана",
-      responses: [],
-      publishedAt: null,
-      assignedExecutorId: null,
-      assignedExecutorName: null,
-      assignedExecutorContact: null,
-      stageMaterials: {
-        thirty: null,
-        sixty: null,
-        final: null
-      },
-      timeline: {
-        assignedAt: null,
-        briefReadAt: null,
-        inWorkAt: null,
-        shown30At: null,
-        shown60At: null,
-        submittedAt: null,
-        approvedAt: null,
-        returnedForFixesAt: null,
-        unpaidAt: null,
-        paidAt: null
-      }
-    }
   });
+  const [managerTasks, setManagerTasks] = useState<Task[]>([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [tasksError, setTasksError] = useState("");
+  const [managerTasksError, setManagerTasksError] = useState("");
 
-  sendMessage(chatId, "Введи название задачи.");
-}
+  const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
+  const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
+  const [approvedExecutors, setApprovedExecutors] = useState<ExecutorProfile[]>([]);
+  const [isLoadingPendingExecutors, setIsLoadingPendingExecutors] = useState(false);
+  const [isLoadingApprovedExecutors, setIsLoadingApprovedExecutors] = useState(false);
+  const [pendingExecutorsError, setPendingExecutorsError] = useState("");
+  const [approvedExecutorsError, setApprovedExecutorsError] = useState("");
+  const [selectedPendingTelegramId, setSelectedPendingTelegramId] = useState<number | null>(null);
+  const [moderationVerifiedSpecializations, setModerationVerifiedSpecializations] = useState<string[]>([]);
+  const [moderationAccuracy, setModerationAccuracy] = useState("5");
+  const [moderationSpeed, setModerationSpeed] = useState("5");
+  const [moderationAesthetics, setModerationAesthetics] = useState("5");
+  const [moderationMessage, setModerationMessage] = useState("");
+  const [isModeratingExecutor, setIsModeratingExecutor] = useState(false);
 
-async function finishTaskCreation(chatId, state) {
-  try {
-    state.task.deadline = `${state.task.deadlineDate} ${state.task.deadlineTime}`;
-    await saveTaskToDb(state.task);
+  const [isManagerEditingRegistryExecutor, setIsManagerEditingRegistryExecutor] = useState(false);
+  const [editingRegistryTelegramId, setEditingRegistryTelegramId] = useState<number | null>(null);
+  const [managerExecutorMessage, setManagerExecutorMessage] = useState("");
+  const [isSavingManagerExecutor, setIsSavingManagerExecutor] = useState(false);
+  const [managerEditFullName, setManagerEditFullName] = useState("");
+  const [managerEditContact, setManagerEditContact] = useState("");
+  const [managerEditSpecializations, setManagerEditSpecializations] = useState<string[]>([]);
+  const [managerEditVerifiedSpecializations, setManagerEditVerifiedSpecializations] = useState<string[]>([]);
+  const [managerEditPortfolio, setManagerEditPortfolio] = useState("");
+  const [managerEditPaymentMethod, setManagerEditPaymentMethod] = useState("");
+  const [managerEditPaymentDetails, setManagerEditPaymentDetails] = useState("");
+  const [managerEditUnavailableDays, setManagerEditUnavailableDays] = useState<string[]>([]);
+  const [managerEditUnavailableTime, setManagerEditUnavailableTime] = useState("");
+  const [managerEditReviewAccuracy, setManagerEditReviewAccuracy] = useState("5");
+  const [managerEditReviewSpeed, setManagerEditReviewSpeed] = useState("5");
+  const [managerEditReviewAesthetics, setManagerEditReviewAesthetics] = useState("5");
+  const [managerEditContractData, setManagerEditContractData] = useState("");
+  const [managerEditInvoices, setManagerEditInvoices] = useState<Array<{ value: string; createdAt: string }>>([]);
+  const [newManagerInvoice, setNewManagerInvoice] = useState("");
 
-    const existingIndex = tasks.findIndex(t => t.id === state.task.id);
-    if (existingIndex === -1) {
-      tasks.push(state.task);
-    } else {
-      tasks[existingIndex] = state.task;
+  const [createTitle, setCreateTitle] = useState("");
+  const [createCategories, setCreateCategories] = useState<string[]>([]);
+  const [createDeadlineDate, setCreateDeadlineDate] = useState("");
+  const [createDeadlineTime, setCreateDeadlineTime] = useState("");
+  const [createPrice, setCreatePrice] = useState("");
+  const [createManagerContact, setCreateManagerContact] = useState("");
+  const [createSources, setCreateSources] = useState("");
+  const [createRefs, setCreateRefs] = useState("");
+  const [createDeliveryTarget, setCreateDeliveryTarget] = useState("");
+  const [createComment, setCreateComment] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    const telegram = (window as any)?.Telegram?.WebApp;
+    telegram?.ready?.();
+
+    const username = telegram?.initDataUnsafe?.user?.username;
+    if (username) {
+      setCreateManagerContact(`@${username}`);
+      setExecutorContact(`@${username}`);
     }
+  }, []);
 
-    userStates.delete(chatId);
+  const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+  const executorVisibleTasks = useMemo(() => {
+    if (executorTaskTopTab === "new") return executorTasks.available.filter((task) => !task.myDecision);
+    if (executorTaskTopTab === "active") return executorTasks.active;
+    return executorTasks.archived;
+  }, [executorTaskTopTab, executorTasks]);
+  const paymentPrompt = getPaymentPrompt(executorPaymentMethod);
 
-    sendMessage(
-      chatId,
-      `Задача создана.\n\n${formatTaskCard(state.task)}`,
-      getTaskAfterCreateKeyboard()
-    );
+  const managerExecutorsBadge = useMemo(() => pendingExecutors.length || 0, [pendingExecutors]);
+  const managerTasksBadge = useMemo(() => {
+    return (managerTasks || []).reduce((count, task) => {
+      const acceptedResponses = (task.responses || []).filter((item) => item.decision === "Принял").length;
+      const needsAction =
+        acceptedResponses > 0 ||
+        task.status === "На проверке" ||
+        task.status === "Счёт загружен" ||
+        task.status === "Не оплачена" ||
+        task.status === "Ожидает счёт" ||
+        task.status === "Ожидает подтверждения оплаты";
+      return count + (needsAction ? 1 : 0);
+    }, 0);
+  }, [managerTasks]);
+  const executorTasksBadge = useMemo(() => {
+    const newTasksCount = executorTasks.available.filter((task) => !task.myDecision).length;
+    const actionTasksCount = executorTasks.active.filter((task) =>
+      ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "Правки", "Ожидает счёт", "Ожидает подтверждения оплаты"].includes(String(task.status || ""))
+    ).length;
+    return newTasksCount + actionTasksCount;
+  }, [executorTasks]);
 
-    notifyTaskMaterials(chatId, state.task);
-  } catch (error) {
-    console.error("finishTaskCreation error:", error);
-    sendMessage(chatId, "Не удалось сохранить задачу. Посмотри логи Render.");
-  }
-}
-
-async function handleTaskCreationStep(chatId, message, state) {
-  const text = message.text;
-  const input = extractInput(message);
-
-  if (!input && text !== "Пропустить") {
-    sendMessage(chatId, "Не удалось прочитать сообщение. Отправь текст, ссылку или файл.");
-    return;
-  }
-
-  if (state.step === "title") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Название задачи лучше отправить текстом.");
-      return;
-    }
-    state.task.title = input.value.trim();
-    state.step = "categories";
-    state.task.categories = [];
-    sendMessage(chatId, "Выбери категории задачи. Можно несколько. Потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "categories") {
-    if (text === "Готово") {
-      if (!state.task.categories.length) {
-        sendMessage(chatId, "Нужно выбрать хотя бы одну категорию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-        return;
-      }
-
-      state.step = "deadline_date";
-      sendMessage(chatId, "Выбери дату дедлайна.", getDateKeyboard());
-      return;
-    }
-
-    if (!SPECIALIZATION_OPTIONS.includes(text)) {
-      sendMessage(chatId, "Выбери категорию кнопкой или нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-      return;
-    }
-
-    if (!state.task.categories.includes(text)) {
-      state.task.categories.push(text);
-    }
-
-    sendMessage(chatId, `Выбрано: ${state.task.categories.join(", ")}`, getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "deadline_date") {
-    if (text === "Ввести дату вручную") {
-      state.step = "deadline_date_manual";
-      sendMessage(chatId, "Введи дату в формате YYYY-MM-DD. Например: 2026-03-16");
-      return;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(DATE_OPTION_VALUES, text)) {
-      const date = new Date();
-      date.setDate(date.getDate() + DATE_OPTION_VALUES[text]);
-      state.task.deadlineDate = date.toISOString().slice(0, 10);
-      state.step = "deadline_time";
-      sendMessage(chatId, "Выбери время дедлайна.", getTimeKeyboard());
-      return;
-    }
-
-    sendMessage(chatId, "Выбери дату кнопкой.", getDateKeyboard());
-    return;
-  }
-
-  if (state.step === "deadline_date_manual") {
-    if (!input || input.type !== "text" || !isValidManualDate(input.value)) {
-      sendMessage(chatId, "Нужен формат YYYY-MM-DD. Например: 2026-03-16");
-      return;
-    }
-
-    state.task.deadlineDate = input.value.trim();
-    state.step = "deadline_time";
-    sendMessage(chatId, "Выбери время дедлайна.", getTimeKeyboard());
-    return;
-  }
-
-  if (state.step === "deadline_time") {
-    if (text === "Ввести время вручную") {
-      state.step = "deadline_time_manual";
-      sendMessage(chatId, "Введи время в формате HH:MM. Например: 18:00");
-      return;
-    }
-
-    if (TIME_OPTIONS.includes(text)) {
-      state.task.deadlineTime = text;
-      state.step = "price";
-      sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
-      return;
-    }
-
-    sendMessage(chatId, "Выбери время кнопкой.", getTimeKeyboard());
-    return;
-  }
-
-  if (state.step === "deadline_time_manual") {
-    if (!input || input.type !== "text" || !isValidManualTime(input.value)) {
-      sendMessage(chatId, "Нужен формат HH:MM. Например: 18:00");
-      return;
-    }
-
-    state.task.deadlineTime = input.value.trim();
-    state.step = "price";
-    sendMessage(chatId, "Введи стоимость задачи. Например: 1500 ₽.");
-    return;
-  }
-
-  if (state.step === "price") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Стоимость лучше отправить текстом.");
-      return;
-    }
-
-    state.task.price = input.value.trim();
-    state.step = "brief";
-    sendMessage(chatId, "Отправь ТЗ. Это обязательное поле: можно текст, ссылку или файл.");
-    return;
-  }
-
-  if (state.step === "brief") {
-    if (!input) {
-      sendMessage(chatId, "ТЗ обязательно. Отправь текст, ссылку или файл.");
-      return;
-    }
-
-    state.task.brief = input;
-    state.step = "sources";
-    sendMessage(chatId, "Отправь источники. Можно текст, ссылку или файл. Это поле необязательное.", getSkipKeyboard());
-    return;
-  }
-
-  if (state.step === "sources") {
-    state.task.sources = text === "Пропустить" ? null : input;
-    state.step = "refs_data";
-    sendMessage(chatId, "Отправь референсы. Можно текст, ссылку или файл. Это поле необязательное.", getSkipKeyboard());
-    return;
-  }
-
-  if (state.step === "refs_data") {
-    state.task.refs_data = text === "Пропустить" ? null : input;
-    state.step = "comment";
-    sendMessage(chatId, "Отправь комментарий. Это поле необязательное.", getSkipKeyboard());
-    return;
-  }
-
-  if (state.step === "comment") {
-    if (text === "Пропустить") {
-      state.task.comment = null;
-    } else if (input?.type === "text") {
-      state.task.comment = input.value;
-    } else if (input?.type === "document") {
-      state.task.comment = input.caption?.trim()
-        ? `Комментарий к файлу: ${input.caption}`
-        : "Комментарий приложен файлом.";
-    } else {
-      state.task.comment = null;
-    }
-
-    await finishTaskCreation(chatId, state);
-  }
-}
-
-/* -------------------- Executor registration -------------------- */
-
-function startExecutorRegistration(chatId, from, existing = null) {
-  const autoContact = from?.username ? `@${from.username}` : (existing?.telegramContact || "");
-
-  userStates.set(chatId, {
-    type: "executor_registration",
-    step: "name",
-    profile: {
-      telegramId: from?.id || null,
-      executorCode: existing?.executorCode || generateExecutorCode(),
-      username: from?.username || null,
-      telegramContact: autoContact,
-      fullName: existing?.fullName || "",
-      specializations: existing?.specializations || [],
-      verifiedSpecializations: existing?.verifiedSpecializations || [],
-      portfolio: existing?.portfolio || null,
-      paymentMethod: existing?.paymentMethod || "",
-      paymentDetails: existing?.paymentDetails || null,
-      paymentFile: existing?.paymentFile || null,
-      contractData: existing?.contractData || null,
-      unavailableDays: existing?.unavailableDays || [],
-      unavailableTime: existing?.unavailableTime || "",
-      status: existing?.status || "На модерации",
-      approvedBy: existing?.approvedBy || null,
-      approvedByManagerId: existing?.approvedByManagerId || null,
-      reviewAccuracy: typeof existing?.reviewAccuracy === "number" ? existing.reviewAccuracy : null,
-      reviewSpeed: typeof existing?.reviewSpeed === "number" ? existing.reviewSpeed : null,
-      reviewAesthetics: typeof existing?.reviewAesthetics === "number" ? existing.reviewAesthetics : null,
-      baseRating: typeof existing?.baseRating === "number" ? existing.baseRating : null,
-      newcomerBoost: typeof existing?.newcomerBoost === "number" ? existing.newcomerBoost : null,
-      rating: typeof existing?.rating === "number" ? existing.rating : null,
-      completedOrders: existing?.completedOrders || 0,
-      createdAt: existing?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      responseHistory: existing?.responseHistory || []
-    }
-  });
-
-  sendMessage(chatId, "Введи имя и фамилию. Формат: Имя Фамилия");
-}
-
-function notifyManagersAboutExecutor(profile) {
-  if (managers.size === 0) return;
-
-  const text = [
-    "Новая анкета исполнителя",
-    "",
-    `Имя: ${profile.fullName || "—"}`,
-    `Контакт: ${profile.telegramContact || "—"}`,
-    `Специализации: ${profile.specializations?.length ? profile.specializations.join(", ") : "—"}`,
-    `Портфолио: ${profile.portfolio || "—"}`,
-    `Способ выплаты: ${profile.paymentMethod || "—"}`,
-    `Платёжные данные: ${formatField(profile.paymentDetails, "Платёжные данные")}`,
-    `Договор: ${formatField(profile.contractData, "Договор")}`,
-    `Недоступные дни: ${profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}`,
-    `Недоступное время: ${profile.unavailableTime || "—"}`,
-    `Статус: ${profile.status || "—"}`
-  ].join("\n");
-
-  for (const managerChatId of managers) {
-    sendMessage(managerChatId, text, getMainKeyboard(true));
-    if (profile.paymentFile?.type === "document") {
-      sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
-    }
-  }
-}
-
-async function finishExecutorRegistration(chatId, state) {
-  state.profile.updatedAt = new Date().toISOString();
-  state.profile.status = "На модерации";
-  state.profile.approvedBy = null;
-  state.profile.approvedByManagerId = null;
-  state.profile.verifiedSpecializations = [];
-  state.profile.reviewAccuracy = null;
-  state.profile.reviewSpeed = null;
-  state.profile.reviewAesthetics = null;
-  state.profile.baseRating = null;
-  state.profile.newcomerBoost = null;
-  state.profile.rating = null;
-
-  executors.set(chatId, state.profile);
-  await saveExecutorToDb(state.profile);
-  userStates.delete(chatId);
-
-  sendMessage(
-    chatId,
-    `Анкета сохранена и отправлена на модерацию.\n\n${formatExecutorProfile(state.profile)}`,
-    getMainKeyboard(false, true)
+  const selectedPendingExecutor = useMemo(
+    () => pendingExecutors.find((item) => Number(item.telegramId) === Number(selectedPendingTelegramId)) || null,
+    [pendingExecutors, selectedPendingTelegramId]
   );
 
-  if (state.profile.paymentFile?.type === "document") {
-    sendDocument(chatId, state.profile.paymentFile.file_id, "Твой файл с реквизитами");
-  }
+  const selectedApprovedExecutor = useMemo(
+    () => approvedExecutors.find((item) => Number(item.telegramId) === Number(editingRegistryTelegramId)) || null,
+    [approvedExecutors, editingRegistryTelegramId]
+  );
 
-  notifyManagersAboutExecutor(state.profile);
-}
+  const fillExecutorFormFromProfile = (profile: ExecutorProfile | null) => {
+    if (!profile) return;
+    setExecutorFullName(profile.fullName || "");
+    setExecutorContact(profile.telegramContact || "");
+    setExecutorSpecializations(profile.specializations || []);
+    setExecutorPortfolio(profile.portfolio || "");
+    setExecutorPaymentMethod(profile.paymentMethod || "");
+    setExecutorPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
+    setExecutorUnavailableDays(profile.unavailableDays || []);
+    setExecutorUnavailableTime(profile.unavailableTime || "");
+  };
 
-async function handleExecutorRegistrationStep(chatId, message, state) {
-  const text = message.text;
-  const input = extractInput(message);
+  const fillManagerExecutorForm = (profile: ExecutorProfile | null) => {
+    if (!profile) return;
+    setManagerEditFullName(profile.fullName || "");
+    setManagerEditContact(profile.telegramContact || "");
+    setManagerEditSpecializations(profile.specializations || []);
+    setManagerEditVerifiedSpecializations(profile.verifiedSpecializations || profile.specializations || []);
+    setManagerEditPortfolio(profile.portfolio || "");
+    setManagerEditPaymentMethod(profile.paymentMethod || "");
+    setManagerEditPaymentDetails(getPaymentDetailsText(profile.paymentDetails));
+    setManagerEditUnavailableDays(profile.unavailableDays || []);
+    setManagerEditUnavailableTime(profile.unavailableTime || "");
+    setManagerEditReviewAccuracy(String(profile.reviewAccuracy ?? 5));
+    setManagerEditReviewSpeed(String(profile.reviewSpeed ?? 5));
+    setManagerEditReviewAesthetics(String(profile.reviewAesthetics ?? 5));
+    setManagerEditContractData(getPaymentDetailsText(profile.contractData as any));
+    setManagerEditInvoices(normalizeInvoiceList(profile.paymentInvoices));
+    setNewManagerInvoice("");
+  };
 
-  if (state.step === "name") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Имя лучше отправить текстом.");
-      return;
-    }
-
-    if (!isValidFullName(input.value)) {
-      sendMessage(chatId, "Нужно ввести минимум имя и фамилию. Формат: Имя Фамилия");
-      return;
-    }
-
-    state.profile.fullName = input.value.trim();
-
-    if (!state.profile.telegramContact) {
-      state.step = "telegram_contact";
-      sendMessage(
-        chatId,
-        "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\nПримеры:\n@mayya_design\n+79991234567"
-      );
-      return;
-    }
-
-    state.step = "specializations";
-    state.profile.specializations = [];
-    sendMessage(chatId, "Выбери специализации. Можно несколько. Нажимай кнопки по одной, потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "telegram_contact") {
-    if (!input || input.type !== "text" || !isValidTelegramContact(input.value)) {
-      sendMessage(
-        chatId,
-        "Нужен корректный контакт для связи: @username или телефон Telegram.\nПримеры:\n@mayya_design\n+79991234567"
-      );
-      return;
-    }
-
-    state.profile.telegramContact = input.value.trim();
-    state.step = "specializations";
-    state.profile.specializations = [];
-    sendMessage(chatId, "Выбери специализации. Можно несколько. Нажимай кнопки по одной, потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "specializations") {
-    if (text === "Готово") {
-      if (!state.profile.specializations.length) {
-        sendMessage(chatId, "Нужно выбрать хотя бы одну специализацию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-        return;
-      }
-
-      state.step = "portfolio";
-      sendMessage(chatId, "Пришли ссылку на портфолио. Подойдёт любое портфолио, не обязательно по баннерам. Поле можно пропустить.", getSkipKeyboard());
-      return;
-    }
-
-    if (!SPECIALIZATION_OPTIONS.includes(text)) {
-      sendMessage(chatId, "Выбери специализацию кнопкой или нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-      return;
-    }
-
-    if (!state.profile.specializations.includes(text)) {
-      state.profile.specializations.push(text);
-    }
-
-    sendMessage(chatId, `Выбрано: ${state.profile.specializations.join(", ")}`, getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "portfolio") {
-    if (text === "Пропустить") {
-      state.profile.portfolio = null;
-    } else if (input?.type === "text") {
-      state.profile.portfolio = input.value;
-    } else {
-      sendMessage(chatId, "Портфолио лучше отправить текстом или ссылкой. Либо нажми Пропустить.", getSkipKeyboard());
-      return;
-    }
-
-    state.step = "payment_method";
-    sendMessage(chatId, "Выбери удобный способ выплаты.", getPaymentKeyboard());
-    return;
-  }
-
-  if (state.step === "payment_method") {
-    if (!PAYMENT_OPTIONS.includes(text)) {
-      sendMessage(chatId, "Выбери один из вариантов выплаты кнопкой.", getPaymentKeyboard());
-      return;
-    }
-
-    state.profile.paymentMethod = text;
-
-    if (text === "Переводом") {
-      state.step = "payment_details_transfer";
-      sendMessage(
-        chatId,
-        "Введи номер телефона или карты для выплаты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
-      );
-      return;
-    }
-
-    state.step = "payment_details_business";
-    sendMessage(chatId, `Введи реквизиты для ${text}. Потом отдельным сообщением можно будет приложить файл.`);
-    return;
-  }
-
-  if (state.step === "payment_details_transfer") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Реквизиты лучше отправить текстом.");
-      return;
-    }
-
-    if (!isValidTransferDetails(input.value)) {
-      sendMessage(
-        chatId,
-        "Нужен корректный номер телефона или карты.\nПримеры:\n+79991234567\n89991234567\n5536 9141 2345 6789"
-      );
-      return;
-    }
-
-    state.profile.paymentDetails = input;
-    state.profile.paymentFile = null;
-    state.step = "unavailable_days";
-    state.profile.unavailableDays = [];
-    sendMessage(chatId, "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.", getDoneKeyboard(DAY_OPTIONS));
-    return;
-  }
-
-  if (state.step === "payment_details_business") {
-    if (!input || input.type !== "text") {
-      sendMessage(chatId, "Реквизиты лучше отправить текстом.");
-      return;
-    }
-
-    state.profile.paymentDetails = input;
-    state.step = "payment_file";
-    sendMessage(chatId, "Теперь можешь приложить файл с реквизитами. Это поле необязательное.", getSkipKeyboard());
-    return;
-  }
-
-  if (state.step === "payment_file") {
-    if (text === "Пропустить") {
-      state.profile.paymentFile = null;
-    } else if (message.document) {
-      state.profile.paymentFile = extractInput(message);
-    } else {
-      sendMessage(chatId, "Пришли файл или нажми Пропустить.", getSkipKeyboard());
-      return;
-    }
-
-    state.step = "unavailable_days";
-    state.profile.unavailableDays = [];
-    sendMessage(chatId, "Выбери дни, когда ты точно не можешь брать срочные задачи. Можно несколько. Потом нажми Готово. Если таких дней нет — сразу нажми Готово.", getDoneKeyboard(DAY_OPTIONS));
-    return;
-  }
-
-  if (state.step === "unavailable_days") {
-    if (text === "Готово") {
-      state.step = "unavailable_time";
-      sendMessage(
-        chatId,
-        "Если есть временные промежутки, когда ты не можешь брать задачи, введи по одной строке в таком формате:\nВторник 10:00-14:00\nСреда 18:00-22:00\nЕсли ограничений нет — нажми Пропустить.",
-        getSkipKeyboard()
-      );
-      return;
-    }
-
-    if (!DAY_OPTIONS.includes(text)) {
-      sendMessage(chatId, "Выбери день кнопкой или нажми Готово.", getDoneKeyboard(DAY_OPTIONS));
-      return;
-    }
-
-    if (!state.profile.unavailableDays.includes(text)) {
-      state.profile.unavailableDays.push(text);
-    }
-
-    sendMessage(chatId, `Выбрано: ${state.profile.unavailableDays.join(", ") || "—"}`, getDoneKeyboard(DAY_OPTIONS));
-    return;
-  }
-
-  if (state.step === "unavailable_time") {
-    if (text === "Пропустить") {
-      state.profile.unavailableTime = "";
-    } else if (input?.type === "text") {
-      if (!isValidUnavailableTime(input.value)) {
-        sendMessage(
-          chatId,
-          "Неверный формат времени.\nВводи по одной строке так:\nВторник 10:00-14:00\nСреда 18:00-22:00",
-          getSkipKeyboard()
-        );
-        return;
-      }
-
-      state.profile.unavailableTime = input.value.trim();
-    } else {
-      sendMessage(chatId, "Напиши время текстом или нажми Пропустить.", getSkipKeyboard());
-      return;
-    }
-
-    await finishExecutorRegistration(chatId, state);
-  }
-}
-
-/* -------------------- Moderation -------------------- */
-
-async function handleManagerContactStep(chatId, text, from) {
-  if (!isValidTelegramContact(text)) {
-    sendMessage(
-      chatId,
-      "Нужен корректный контакт для связи: @username или телефон Telegram.\nПримеры:\n@mayya_design\n+79991234567"
+  const toggleManagerEditSpecialization = (value: string) => {
+    setManagerEditSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
     );
-    return;
-  }
+  };
 
-  managerContacts.set(from.id, text.trim());
-  await saveManagerContactToDb(from.id, text.trim());
-  userStates.delete(chatId);
-  managers.add(from.id);
-  sendMessage(chatId, "Контакт сохранён. Доступ менеджера открыт.", getMainKeyboard(true));
-}
+  const toggleManagerEditVerifiedSpecialization = (value: string) => {
+    setManagerEditVerifiedSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
 
-function ensureManagerContact(chatId, from) {
-  const auto = getRawManagerContact(from);
-  if (auto) {
-    managerContacts.set(from.id, auto);
-    saveManagerContactToDb(from.id, auto).catch(console.error);
+  const toggleManagerEditDay = (value: string) => {
+    setManagerEditUnavailableDays((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+
+  const handleAddManagerInvoice = () => {
+    const value = newManagerInvoice.trim();
+    if (!value) return;
+    setManagerEditInvoices((prev) => [
+      { value, createdAt: new Date().toISOString() },
+      ...prev
+    ]);
+    setNewManagerInvoice("");
+  };
+
+  const handleRemoveManagerInvoice = (targetCreatedAt: string) => {
+    setManagerEditInvoices((prev) => prev.filter((item) => item.createdAt !== targetCreatedAt));
+  };
+
+  const loadTasks = async () => {
+    try {
+      setIsLoadingTasks(true);
+      setTasksError("");
+
+      const response = await fetch(`${API_BASE}/api/tasks`, {
+        method: "GET"
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data: TasksResponse = await response.json();
+
+      setTasksData({
+        waiting: Array.isArray(data.waiting) ? data.waiting : [],
+        active: Array.isArray(data.active) ? data.active : [],
+        archived: Array.isArray(data.archived) ? data.archived : []
+      });
+    } catch (error) {
+      console.error("Failed to load tasks:", error);
+      setTasksError("Не удалось загрузить задачи с сервера");
+    } finally {
+      setIsLoadingTasks(false);
+    }
+  };
+
+  const loadManagerTasks = async () => {
+    try {
+      setManagerTasksError("");
+      if (!createManagerContact.trim()) {
+        setManagerTasks([]);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact.trim())}`, {
+        method: "GET"
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error((data as any)?.error || "Failed to load manager tasks");
+      }
+
+      setManagerTasks(Array.isArray((data as any)?.tasks) ? (data as any).tasks : []);
+    } catch (error) {
+      console.error("Failed to load manager tasks:", error);
+      setManagerTasksError("Не удалось загрузить отклики исполнителей");
+    }
+  };
+
+  useEffect(() => {
+    if (screen === "managerApp" && activeBottomTab === "tasks") {
+      void loadTasks();
+      void loadManagerTasks();
+      void loadApprovedExecutors();
+    }
+  }, [screen, activeBottomTab, createManagerContact]);
+
+  useEffect(() => {
+    if (screen === "managerApp" && activeBottomTab === "executors") {
+      void loadPendingExecutors();
+      void loadApprovedExecutors();
+    }
+  }, [screen, activeBottomTab]);
+
+  useEffect(() => {
+    if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
+      void loadExecutorTasks(Number(executor.telegramId));
+    }
+  }, [screen, executorBottomTab, executorTaskTopTab, executor?.telegramId]);
+
+  const resetExecutorForm = () => {
+    setExecutorFormError("");
+    setExecutorInfo("");
+    setExecutorFullName("");
+    setExecutorSpecializations([]);
+    setExecutorPortfolio("");
+    setExecutorPaymentMethod("");
+    setExecutorPaymentDetails("");
+    setExecutorUnavailableDays([]);
+    setExecutorUnavailableTime("");
+    setIsExecutorEditing(false);
+
+    const telegram = (window as any)?.Telegram?.WebApp;
+    const username = telegram?.initDataUnsafe?.user?.username;
+    setExecutorContact(username ? `@${username}` : "");
+  };
+
+  const loadExecutor = async () => {
+    try {
+      setExecutorError("");
+      setExecutorInfo("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      telegram?.ready?.();
+
+      const user = telegram?.initDataUnsafe?.user;
+
+      if (!user?.id) {
+        setScreen("executorRegister");
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/api/executors/me`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: user.id
+        })
+      });
+
+      if (res.status === 404) {
+        setScreen("executorRegister");
+        return;
+      }
+
+      const data = await res.json();
+
+      if (!data?.executor) {
+        setScreen("executorRegister");
+        return;
+      }
+
+      setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
+
+      if (data.executor.status === "На модерации") {
+        setScreen("executorPending");
+        return;
+      }
+
+      if (data.executor.status === "Подтверждён") {
+        setExecutorBottomTab("tasks");
+        void loadExecutorTasks(Number(data.executor.telegramId));
+        setScreen("executorApp");
+        return;
+      }
+
+      setScreen("executorRegister");
+    } catch (error) {
+      console.error("Failed to load executor:", error);
+      setScreen("executorRegister");
+    }
+  };
+
+
+  const loadExecutorTasks = async (telegramId: number) => {
+    try {
+      setIsLoadingExecutorTasks(true);
+      setExecutorTasksError("");
+      const response = await fetch(`${API_BASE}/api/tasks/executor?telegramId=${telegramId}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Failed to load executor tasks");
+      setExecutorTasks({
+        available: Array.isArray(data.available) ? data.available : [],
+        active: Array.isArray(data.active) ? data.active : [],
+        archived: Array.isArray(data.archived) ? data.archived : []
+      });
+    } catch (error) {
+      console.error("Failed to load executor tasks:", error);
+      setExecutorTasksError("Не удалось загрузить задачи исполнителя");
+    } finally {
+      setIsLoadingExecutorTasks(false);
+    }
+  };
+
+  const handleExecutorTaskDecision = async (taskId: number, decision: "accept" | "decline") => {
+    try {
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const user = telegram?.initDataUnsafe?.user;
+      const response = await fetch(`${API_BASE}/api/tasks/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, telegramId: user?.id || null, decision })
+      });
+      if (!response.ok) throw new Error("Failed to save decision");
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+      await loadTasks();
+      await loadManagerTasks();
+    } catch (error) {
+      console.error("Failed to save executor decision:", error);
+      setExecutorTasksError("Не удалось обновить статус задачи");
+    }
+  };
+
+  const executorActionButtonLabel = (status?: string | null) => {
+    if (status === "Назначена") return "Подтвердить изучение ТЗ";
+    if (status === "ТЗ изучено") return "Начать работу";
+    if (status === "В работе") return "Загрузить 30%";
+    if (status === "30%") return "Загрузить 60%";
+    if (status === "60%" || status === "Правки") return "Сдать задачу";
+    return null;
+  };
+
+  const handleExecutorStageAction = async (task: Task) => {
+    const label = executorActionButtonLabel(task.status);
+    if (!label || !executor?.telegramId) return;
+
+    if (label === "Подтвердить изучение ТЗ" || label === "Начать работу") {
+      const action = label === "Подтвердить изучение ТЗ" ? "Изучил ТЗ" : "Взял в работу";
+      try {
+        const response = await fetch(`${API_BASE}/api/tasks/executor-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId: task.id, telegramId: executor.telegramId, action })
+        });
+        if (!response.ok) throw new Error("Failed executor action");
+        await loadExecutorTasks(executor.telegramId);
+        await loadTasks();
+      } catch (error) {
+        console.error("Failed executor action:", error);
+        setExecutorTasksError("Не удалось обновить этап");
+      }
+      return;
+    }
+
+    setStageTaskId(task.id);
+    setStageKey(label === "Загрузить 30%" ? "30" : label === "Загрузить 60%" ? "60" : "final");
+    setStageValue("");
+    setStageError("");
+  };
+
+  const submitStageMaterial = async () => {
+    if (!stageTaskId || !stageKey || !executor?.telegramId) return;
+    if (!stageValue.trim()) {
+      setStageError("Введи ссылку или комментарий");
+      return;
+    }
+    try {
+      setStageLoading(true);
+      const response = await fetch(`${API_BASE}/api/tasks/stage-submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
+      });
+      if (!response.ok) throw new Error("Failed stage submit");
+      setStageTaskId(null);
+      setStageKey(null);
+      setStageValue("");
+      setStageError("");
+      await loadExecutorTasks(executor.telegramId);
+      await loadTasks();
+    } catch (error) {
+      console.error("Failed to submit stage:", error);
+      setStageError("Не удалось отправить материал");
+    } finally {
+      setStageLoading(false);
+    }
+  };
+
+
+  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid") => {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, action })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "manager stage action failed");
+      await loadTasks();
+      await loadManagerTasks();
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+    } catch (error) {
+      console.error("Failed manager stage action:", error);
+      setManagerTasksError("Не удалось обновить статус задачи");
+    }
+  };
+
+  const submitFixes = async () => {
+    if (!fixesTaskId) return;
+    if (!fixesValue.trim()) {
+      setFixesError("Опиши, что нужно исправить");
+      return;
+    }
+    try {
+      setFixesLoading(true);
+      setFixesError("");
+      const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim() })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "fixes submit failed");
+      setFixesTaskId(null);
+      setFixesValue("");
+      await loadTasks();
+      await loadManagerTasks();
+      if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+    } catch (error) {
+      console.error("Failed to submit fixes:", error);
+      setFixesError("Не удалось отправить задачу на правки");
+    } finally {
+      setFixesLoading(false);
+    }
+  };
+
+  const handleManagerLogin = () => {
+    if (!password.trim()) {
+      setPasswordError("Введи пароль менеджера");
+      return;
+    }
+
+    setPasswordError("");
+    setScreen("managerApp");
+  };
+
+  const toggleCategory = (category: string) => {
+    setCreateCategories((prev) =>
+      prev.includes(category) ? prev.filter((item) => item !== category) : [...prev, category]
+    );
+  };
+
+  const toggleExecutorSpecialization = (value: string) => {
+    setExecutorSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleExecutorDay = (value: string) => {
+    setExecutorUnavailableDays((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const toggleModerationVerifiedSpecialization = (value: string) => {
+    setModerationVerifiedSpecializations((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  };
+
+  const loadPendingExecutors = async () => {
+    try {
+      setIsLoadingPendingExecutors(true);
+      setPendingExecutorsError("");
+      setModerationMessage("");
+
+      const response = await fetch(`${API_BASE}/api/executors/pending`, {
+        method: "GET"
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load pending executors");
+      }
+
+      const list = Array.isArray(data.executors) ? data.executors : [];
+      setPendingExecutors(list);
+
+      if (!list.length) {
+        setSelectedPendingTelegramId(null);
+        return;
+      }
+
+      const nextSelected =
+        list.find((item: ExecutorProfile) => Number(item.telegramId) === Number(selectedPendingTelegramId)) ||
+        list[0];
+
+      setSelectedPendingTelegramId(Number(nextSelected.telegramId));
+      setModerationVerifiedSpecializations(nextSelected.specializations || []);
+    } catch (error) {
+      console.error("Failed to load pending executors:", error);
+      setPendingExecutorsError("Не удалось загрузить заявки исполнителей");
+    } finally {
+      setIsLoadingPendingExecutors(false);
+    }
+  };
+
+
+  const loadApprovedExecutors = async () => {
+    try {
+      setIsLoadingApprovedExecutors(true);
+      setApprovedExecutorsError("");
+
+      const response = await fetch(`${API_BASE}/api/executors/approved`, {
+        method: "GET"
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load approved executors");
+      }
+
+      const list = Array.isArray(data.executors) ? data.executors : [];
+      list.sort((a: ExecutorProfile, b: ExecutorProfile) => {
+        const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        return Number(b.completedOrders || 0) - Number(a.completedOrders || 0);
+      });
+      setApprovedExecutors(list);
+    } catch (error) {
+      console.error("Failed to load approved executors:", error);
+      setApprovedExecutorsError("Не удалось загрузить реестр исполнителей");
+    } finally {
+      setIsLoadingApprovedExecutors(false);
+    }
+  };
+
+
+  const getApprovedExecutorRank = (executorId?: number | null) => {
+    if (!executorId) return null;
+    const index = approvedExecutors.findIndex((item) => Number(item.telegramId) === Number(executorId));
+    return index >= 0 ? index + 1 : null;
+  };
+
+  const openPendingExecutor = (profile: ExecutorProfile) => {
+    setSelectedPendingTelegramId(Number(profile.telegramId));
+    setModerationVerifiedSpecializations(profile.specializations || []);
+    setModerationAccuracy("5");
+    setModerationSpeed("5");
+    setModerationAesthetics("5");
+    setModerationMessage("");
+  };
+
+  const openRegistryExecutorEditor = (profile: ExecutorProfile) => {
+    setEditingRegistryTelegramId(Number(profile.telegramId));
+    fillManagerExecutorForm(profile);
+    setManagerExecutorMessage("");
+    setIsManagerEditingRegistryExecutor(true);
+  };
+
+  const handleManagerSaveExecutor = async () => {
+    if (!selectedApprovedExecutor?.telegramId) {
+      setManagerExecutorMessage("Исполнитель не выбран");
+      return;
+    }
+
+    if (!managerEditFullName.trim() || !managerEditContact.trim()) {
+      setManagerExecutorMessage("Имя и контакт обязательны");
+      return;
+    }
+
+    if (!managerEditSpecializations.length) {
+      setManagerExecutorMessage("Нужна хотя бы одна специализация");
+      return;
+    }
+
+    if (!managerEditVerifiedSpecializations.length) {
+      setManagerExecutorMessage("Нужна хотя бы одна подтверждённая специализация");
+      return;
+    }
+
+    try {
+      setIsSavingManagerExecutor(true);
+      setManagerExecutorMessage("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const username = telegram?.initDataUnsafe?.user?.username || null;
+      const managerContact = username ? `@${username}` : createManagerContact.trim() || "Менеджер";
+
+      const response = await fetch(`${API_BASE}/api/executors/manager-update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: selectedApprovedExecutor.telegramId,
+          managerContact,
+          fullName: managerEditFullName.trim(),
+          telegramContact: managerEditContact.trim(),
+          specializations: managerEditSpecializations,
+          verifiedSpecializations: managerEditVerifiedSpecializations,
+          portfolio: managerEditPortfolio.trim() || null,
+          paymentMethod: managerEditPaymentMethod.trim() || null,
+          paymentDetails: managerEditPaymentDetails.trim() || null,
+          unavailableDays: managerEditUnavailableDays,
+          unavailableTime: managerEditUnavailableTime.trim() || "",
+          reviewAccuracy: Number(managerEditReviewAccuracy),
+          reviewSpeed: Number(managerEditReviewSpeed),
+          reviewAesthetics: Number(managerEditReviewAesthetics),
+          contractData: managerEditContractData.trim() || null,
+          paymentInvoices: managerEditInvoices
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Manager update failed");
+      }
+
+      setManagerExecutorMessage("Карточка исполнителя обновлена");
+      setIsManagerEditingRegistryExecutor(false);
+      await loadApprovedExecutors();
+    } catch (error) {
+      console.error("Failed to save executor by manager:", error);
+      setManagerExecutorMessage("Не удалось сохранить изменения");
+    } finally {
+      setIsSavingManagerExecutor(false);
+    }
+  };
+
+  const handleModerateExecutor = async (decision: "approve" | "reject") => {
+    if (!selectedPendingExecutor?.telegramId) return;
+
+    if (decision === "approve" && !moderationVerifiedSpecializations.length) {
+      setModerationMessage("Выбери хотя бы одну подтверждённую специализацию");
+      return;
+    }
+
+    try {
+      setIsModeratingExecutor(true);
+      setModerationMessage("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const username = telegram?.initDataUnsafe?.user?.username || null;
+      const managerContact = username ? `@${username}` : createManagerContact.trim() || "Менеджер";
+
+      const response = await fetch(`${API_BASE}/api/executors/moderate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: selectedPendingExecutor.telegramId,
+          decision,
+          managerContact,
+          managerTelegramId: telegram?.initDataUnsafe?.user?.id || null,
+          verifiedSpecializations: moderationVerifiedSpecializations,
+          reviewAccuracy: Number(moderationAccuracy),
+          reviewSpeed: Number(moderationSpeed),
+          reviewAesthetics: Number(moderationAesthetics)
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Moderation failed");
+      }
+
+      setModerationMessage(
+        decision === "approve"
+          ? "Исполнитель подтверждён"
+          : "Исполнитель отклонён"
+      );
+
+      await loadPendingExecutors();
+    } catch (error) {
+      console.error("Failed to moderate executor:", error);
+      setModerationMessage("Не удалось сохранить решение");
+    } finally {
+      setIsModeratingExecutor(false);
+    }
+  };
+
+  const resetCreateForm = () => {
+    setCreateTitle("");
+    setCreateCategories([]);
+    setCreateDeadlineDate("");
+    setCreateDeadlineTime("");
+    setCreatePrice("");
+    setCreateSources("");
+    setCreateRefs("");
+    setCreateDeliveryTarget("");
+    setCreateComment("");
+    setCreateError("");
+    setCreateSuccess("");
+  };
+
+  const handleCreateTask = async () => {
+    if (!createTitle.trim()) {
+      setCreateError("Введите название задачи");
+      return;
+    }
+
+    if (!createCategories.length) {
+      setCreateError("Выберите хотя бы одну категорию");
+      return;
+    }
+
+    if (!createDeadlineDate.trim()) {
+      setCreateError("Введите дату дедлайна");
+      return;
+    }
+
+    if (!createDeadlineTime.trim()) {
+      setCreateError("Введите время дедлайна");
+      return;
+    }
+
+    if (!createPrice.trim()) {
+      setCreateError("Введите стоимость");
+      return;
+    }
+
+    if (!createManagerContact.trim()) {
+      setCreateError("Введите контакт менеджера");
+      return;
+    }
+
+    try {
+      setIsCreating(true);
+      setCreateError("");
+      setCreateSuccess("");
+
+      const response = await fetch(`${API_BASE}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          managerId: 0,
+          managerUsername: null,
+          managerContact: createManagerContact.trim(),
+          title: createTitle.trim(),
+          categories: createCategories,
+          deadlineDate: createDeadlineDate.trim(),
+          deadlineTime: createDeadlineTime.trim(),
+          price: createPrice.trim(),
+          sources: createSources.trim() || null,
+          refs_data: createRefs.trim() || null,
+          deliveryTarget: createDeliveryTarget.trim() || null,
+          comment: createComment.trim() || null
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to create task");
+      }
+
+      resetCreateForm();
+      setCreateSuccess("Задача создана");
+      await loadTasks();
+      setActiveBottomTab("tasks");
+      setActiveTopTab("waiting");
+    } catch (error) {
+      console.error("Failed to create task:", error);
+      setCreateError("Не удалось создать задачу");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleExecutorCodeLogin = async () => {
+    if (!executorCode.trim()) {
+      setExecutorError("Введи ID исполнителя");
+      return;
+    }
+
+    try {
+      setExecutorError("");
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const user = telegram?.initDataUnsafe?.user;
+
+      const response = await fetch(`${API_BASE}/api/executors/login-by-code`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          executorCode: executorCode.trim(),
+          telegramId: user?.id || null,
+          username: user?.username || null,
+          telegramContact: user?.username ? `@${user.username}` : null
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.executor) {
+        setExecutorError("Исполнитель с таким ID не найден");
+        return;
+      }
+
+      setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
+      setExecutorInfo("Аккаунт найден");
+
+      if (data.executor.status === "На модерации") {
+        setScreen("executorPending");
+        return;
+      }
+
+      if (data.executor.status === "Подтверждён") {
+        setExecutorBottomTab("tasks");
+        void loadExecutorTasks(Number(data.executor.telegramId));
+        setScreen("executorApp");
+        return;
+      }
+
+      setScreen("executorRegister");
+    } catch (error) {
+      console.error("Executor code login failed:", error);
+      setExecutorError("Не удалось войти по ID");
+    }
+  };
+
+  const validateExecutorForm = () => {
+    if (!executorFullName.trim()) {
+      setExecutorFormError("Введи имя и фамилию");
+      return false;
+    }
+
+    if (!executorContact.trim()) {
+      setExecutorFormError("Введи контакт для связи");
+      return false;
+    }
+
+    if (!executorSpecializations.length) {
+      setExecutorFormError("Выбери хотя бы одну специализацию");
+      return false;
+    }
+
+    if (!executorPaymentMethod.trim()) {
+      setExecutorFormError("Укажи способ выплаты");
+      return false;
+    }
+
+    if (!executorPaymentDetails.trim()) {
+      setExecutorFormError("Заполни данные для выплаты");
+      return false;
+    }
+
+    setExecutorFormError("");
     return true;
-  }
-
-  if (managerContacts.has(from.id)) return true;
-
-  userStates.set(chatId, {
-    type: "manager_contact",
-    step: "contact"
-  });
-
-  sendMessage(
-    chatId,
-    "У тебя не указан username в Telegram. Введи контакт для связи: @username или номер телефона, привязанный к Telegram.\nПримеры:\n@mayya_design\n+79991234567"
-  );
-  return false;
-}
-
-function showNextPendingExecutor(managerChatId) {
-  const pending = getPendingExecutors();
-
-  if (!pending.length) {
-    userStates.delete(managerChatId);
-    sendMessage(managerChatId, "Заявок на модерации сейчас нет.", getMainKeyboard(true));
-    return;
-  }
-
-  const profile = pending[0];
-
-  userStates.set(managerChatId, {
-    type: "manager_review_executor",
-    step: "decision",
-    targetExecutorTelegramId: profile.telegramId,
-    selectedSpecializations: [],
-    reviewAccuracy: null,
-    reviewSpeed: null,
-    reviewAesthetics: null
-  });
-
-  sendMessage(managerChatId, `Заявка на модерацию\n\n${formatExecutorProfile(profile)}`, getModerationKeyboard());
-
-  if (profile.paymentFile?.type === "document") {
-    sendDocument(managerChatId, profile.paymentFile.file_id, "Файл с реквизитами исполнителя");
-  }
-}
-
-async function handleManagerReviewStep(chatId, text, from, state) {
-  const found = findExecutorByTelegramId(state.targetExecutorTelegramId);
-
-  if (!found) {
-    userStates.delete(chatId);
-    sendMessage(chatId, "Исполнитель для модерации не найден.", getMainKeyboard(true));
-    return;
-  }
-
-  const executorChatId = found.chatId;
-  const profile = found.profile;
-
-  if (state.step === "decision") {
-    if (text === "Следующая заявка") {
-      showNextPendingExecutor(chatId);
-      return;
-    }
-
-    if (text === "В меню менеджера") {
-      userStates.delete(chatId);
-      sendMessage(chatId, "Вернулись в меню менеджера.", getMainKeyboard(true));
-      return;
-    }
-
-    if (text === "Отклонить исполнителя") {
-      profile.status = "Отклонён";
-      profile.approvedBy = getManagerContact(from);
-      profile.approvedByManagerId = from?.id || null;
-      profile.verifiedSpecializations = [];
-      profile.reviewAccuracy = null;
-      profile.reviewSpeed = null;
-      profile.reviewAesthetics = null;
-      profile.baseRating = null;
-      profile.newcomerBoost = null;
-      profile.rating = null;
-      profile.updatedAt = new Date().toISOString();
-
-      executors.set(executorChatId, profile);
-      await saveExecutorToDb(profile);
-      userStates.delete(chatId);
-
-      sendMessage(
-        executorChatId,
-        "Твоя анкета отклонена менеджером. Позже можно будет отредактировать анкету и отправить её снова.",
-        getMainKeyboard(false, true)
-      );
-
-      sendMessage(chatId, "Исполнитель отклонён.", getMainKeyboard(true));
-      return;
-    }
-
-    if (text === "Подтвердить исполнителя") {
-      state.step = "verified_specializations";
-      state.selectedSpecializations = [];
-      sendMessage(chatId, "Выбери подтверждённые специализации. Можно несколько. Потом нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-      return;
-    }
-
-    sendMessage(chatId, "Выбери действие по заявке.", getModerationKeyboard());
-    return;
-  }
-
-  if (state.step === "verified_specializations") {
-    if (text === "Готово") {
-      if (!state.selectedSpecializations.length) {
-        sendMessage(chatId, "Нужно подтвердить хотя бы одну специализацию.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-        return;
-      }
-
-      state.step = "review_accuracy";
-      sendMessage(chatId, "Оцени соблюдение ТЗ по шкале от 1 до 5.");
-      return;
-    }
-
-    if (!SPECIALIZATION_OPTIONS.includes(text)) {
-      sendMessage(chatId, "Выбери специализацию кнопкой или нажми Готово.", getDoneKeyboard(SPECIALIZATION_OPTIONS));
-      return;
-    }
-
-    if (!state.selectedSpecializations.includes(text)) {
-      state.selectedSpecializations.push(text);
-    }
-
-    sendMessage(chatId, `Подтверждено: ${state.selectedSpecializations.join(", ")}`, getDoneKeyboard(SPECIALIZATION_OPTIONS));
-    return;
-  }
-
-  if (state.step === "review_accuracy") {
-    const value = Number(text);
-    if (!Number.isInteger(value) || value < 1 || value > 5) {
-      sendMessage(chatId, "Введи целое число от 1 до 5.");
-      return;
-    }
-
-    state.reviewAccuracy = value;
-    state.step = "review_speed";
-    sendMessage(chatId, "Оцени скорость по шкале от 1 до 5.");
-    return;
-  }
-
-  if (state.step === "review_speed") {
-    const value = Number(text);
-    if (!Number.isInteger(value) || value < 1 || value > 5) {
-      sendMessage(chatId, "Введи целое число от 1 до 5.");
-      return;
-    }
-
-    state.reviewSpeed = value;
-    state.step = "review_aesthetics";
-    sendMessage(chatId, "Оцени эстетику по шкале от 1 до 5.");
-    return;
-  }
-
-  if (state.step === "review_aesthetics") {
-    const value = Number(text);
-    if (!Number.isInteger(value) || value < 1 || value > 5) {
-      sendMessage(chatId, "Введи целое число от 1 до 5.");
-      return;
-    }
-
-    state.reviewAesthetics = value;
-
-    const baseRating = calculateBaseRating(
-      state.reviewAccuracy,
-      state.reviewSpeed,
-      state.reviewAesthetics
-    );
-    const newcomerBoost = calculateNewcomerBoost(baseRating);
-    const finalRating = baseRating + newcomerBoost;
-
-    profile.status = "Подтверждён";
-    profile.approvedBy = getManagerContact(from);
-    profile.approvedByManagerId = from?.id || null;
-    profile.verifiedSpecializations = [...state.selectedSpecializations];
-    profile.reviewAccuracy = state.reviewAccuracy;
-    profile.reviewSpeed = state.reviewSpeed;
-    profile.reviewAesthetics = state.reviewAesthetics;
-    profile.baseRating = baseRating;
-    profile.newcomerBoost = newcomerBoost;
-    profile.rating = finalRating;
-    profile.updatedAt = new Date().toISOString();
-
-    executors.set(executorChatId, profile);
-    await saveExecutorToDb(profile);
-    userStates.delete(chatId);
-
-    sendMessage(
-      executorChatId,
-      `Твоя анкета подтверждена.\n\n${formatExecutorProfile(profile)}`,
-      getMainKeyboard(false, true)
-    );
-
-    if (profile.paymentFile?.type === "document") {
-      sendDocument(executorChatId, profile.paymentFile.file_id, "Твой файл с реквизитами");
-    }
-
-    sendMessage(
-      chatId,
-      `Исполнитель подтверждён.\n\nБазовый рейтинг: ${baseRating}\nБуст новичка: +${newcomerBoost}\nИтоговый рейтинг: ${finalRating}`,
-      getMainKeyboard(true)
-    );
-  }
-}
-
-/* -------------------- Tasks -------------------- */
-
-async function publishTaskToExecutors(managerChatId, task) {
-  const candidates = getConfirmedExecutorsForCategories(task.categories);
-
-  if (!candidates.length) {
-    sendMessage(managerChatId, `Нет подтверждённых исполнителей под выбранные категории "${formatCategories(task.categories)}".`, getMainKeyboard(true));
-    return;
-  }
-
-  task.status = "Ждёт исполнителя";
-  task.publishedAt = new Date().toISOString();
-  await saveTaskToDb(task);
-
-  const inlineKeyboard = {
-    inline_keyboard: [[
-      { text: "Принять", callback_data: `accept_${task.id}` },
-      { text: "Отклонить", callback_data: `decline_${task.id}` }
-    ]]
   };
 
-  for (const profile of candidates) {
-    sendMessage(
-      profile.telegramId,
-      `Новая задача доступна.\n\n${formatTaskCard(task)}`,
-      inlineKeyboard
-    );
-    notifyTaskMaterials(profile.telegramId, task);
-  }
-
-  sendMessage(
-    managerChatId,
-    `Задача #${task.id} опубликована исполнителям.\nПодходящих исполнителей: ${candidates.length}`,
-    getMainKeyboard(true)
-  );
-}
-
-function showResponsesForTask(managerChatId, task) {
-  const accepted = getAcceptedResponses(task);
-
-  if (!accepted.length) {
-    sendMessage(managerChatId, `По задаче #${task.id} пока нет принятых откликов.`, getMainKeyboard(true));
-    return;
-  }
-
-  sendMessage(
-    managerChatId,
-    `Отклики по задаче #${task.id}:\n${task.title}\n\nВыбери, кого назначить.`,
-    getMainKeyboard(true)
-  );
-
-  for (const response of accepted) {
-    const found = findExecutorByTelegramId(response.executorId);
-    const executor = found?.profile || executors.get(response.executorId);
-    const recommendation = getResponseRecommendation(executor || { rating: 0 });
-
-    const text = [
-      `Исполнитель: ${response.executorName}`,
-      `Контакт: ${response.executorContact}`,
-      `Рейтинг: ${typeof executor?.rating === "number" ? executor.rating : "—"}`,
-      `Рекомендация системы: ${recommendation.label}`,
-      `Скоринг рекомендации: ${recommendation.score}`
-    ].join("\n");
-
-    const inlineKeyboard = {
-      inline_keyboard: [[{ text: "Назначить", callback_data: `assign_${task.id}_${response.executorId}` }]]
-    };
-
-    sendMessage(managerChatId, text, inlineKeyboard);
-  }
-}
-
-async function assignExecutorToTask(managerChatId, managerFromId, taskId, executorId) {
-  const task = tasks.find(item => item.id === taskId);
-
-  if (!task) {
-    sendMessage(managerChatId, "Задача не найдена.", getMainKeyboard(true));
-    return;
-  }
-
-  if (task.managerId !== managerFromId) {
-    sendMessage(managerChatId, "Нельзя назначать исполнителя на чужую задачу.", getMainKeyboard(true));
-    return;
-  }
-
-  const accepted = getAcceptedResponses(task);
-  const selectedResponse = accepted.find(item => item.executorId === executorId);
-
-  if (!selectedResponse) {
-    sendMessage(managerChatId, "Этот исполнитель не найден среди принятых откликов.", getMainKeyboard(true));
-    return;
-  }
-
-  const executor = executors.get(executorId);
-  if (!executor) {
-    sendMessage(managerChatId, "Профиль исполнителя не найден.", getMainKeyboard(true));
-    return;
-  }
-
-  task.assignedExecutorId = executorId;
-  task.assignedExecutorName = selectedResponse.executorName;
-  task.assignedExecutorContact = selectedResponse.executorContact;
-  task.status = "Назначена";
-  task.timeline.assignedAt = new Date().toISOString();
-
-  await saveTaskToDb(task);
-
-  sendMessage(
-    executorId,
-    `Тебе назначена задача.\n\n${formatTaskCard(task)}`,
-    getExecutorTaskActionKeyboard(task)
-  );
-  notifyTaskMaterials(executorId, task);
-
-  for (const response of accepted) {
-    if (response.executorId !== executorId) {
-      sendMessage(
-        response.executorId,
-        `По задаче #${task.id} выбран другой исполнитель. Спасибо за отклик.`,
-        getMainKeyboard(false, true)
-      );
-    }
-  }
-
-  sendMessage(
-    managerChatId,
-    `Исполнитель назначен на задачу #${task.id}.\n\n${formatTaskCard(task)}`,
-    getManagerReviewTaskKeyboard(task.id)
-  );
-
-  scheduleTaskReminder(task.id, "read");
-}
-
-async function updateTaskStatusByExecutor(chatId, taskId, action) {
-  const task = tasks.find(item => item.id === taskId);
-
-  if (!task) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  if (task.assignedExecutorId !== chatId) {
-    sendMessage(chatId, "Эта задача назначена не тебе.");
-    return;
-  }
-
-  if (action === "Изучил ТЗ" && task.status === "Назначена") {
-    task.status = "ТЗ изучено";
-    task.timeline.briefReadAt = new Date().toISOString();
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Статус обновлён: ТЗ изучено.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
-    sendMessage(task.managerId, `Исполнитель изучил ТЗ по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-
-    scheduleTaskReminder(task.id, "inwork");
-    return;
-  }
-
-  if (action === "Взял в работу" && task.status === "ТЗ изучено") {
-    task.status = "В работе";
-    task.timeline.inWorkAt = new Date().toISOString();
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Статус обновлён: В работе.\n\n${formatTaskCard(task)}`, getExecutorTaskActionKeyboard(task));
-    sendMessage(task.managerId, `Исполнитель взял задачу #${task.id} в работу.`, getManagerReviewTaskKeyboard(task.id));
-
-    scheduleTaskReminder(task.id, "30");
-    return;
-  }
-
-  if (action === "Сдать задачу" && task.status === "Правки") {
-    task.status = "На проверке";
-    task.timeline.submittedAt = new Date().toISOString();
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Исправленная задача отправлена на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
-    sendMessage(task.managerId, `Исполнитель повторно сдал задачу #${task.id} после правок.`, getManagerReviewTaskKeyboard(task.id));
-    return;
-  }
-
-  sendMessage(chatId, "Это действие сейчас недоступно для текущего статуса задачи.");
-}
-
-function startStageMaterialCollection(chatId, taskId, stageKey) {
-  const task = tasks.find(t => t.id === taskId);
-
-  if (!task) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  if (task.assignedExecutorId !== chatId) {
-    sendMessage(chatId, "Эта задача назначена не тебе.");
-    return;
-  }
-
-  let prompt = "";
-  if (stageKey === "30") prompt = "Пришли материал для этапа 30%: ссылку, текст или файл.";
-  if (stageKey === "60") prompt = "Пришли материал для этапа 60%: ссылку, текст или файл.";
-  if (stageKey === "final") prompt = "Пришли финальный материал: ссылку, текст или файл.";
-
-  userStates.set(chatId, {
-    type: "task_stage_material",
-    step: "await_material",
-    taskId,
-    stageKey
-  });
-
-  sendMessage(chatId, prompt);
-}
-
-async function handleTaskStageMaterial(chatId, message, state) {
-  const task = tasks.find(t => t.id === state.taskId);
-  const input = extractInput(message);
-
-  if (!task) {
-    userStates.delete(chatId);
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  if (!input) {
-    sendMessage(chatId, "Нужен текст, ссылка или файл.");
-    return;
-  }
-
-  if (state.stageKey === "30") {
-    task.status = "30%";
-    task.timeline.shown30At = new Date().toISOString();
-    task.stageMaterials.thirty = input;
-    userStates.delete(chatId);
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Материал 30% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
-    sendMessage(task.managerId, `Исполнитель отправил этап 30% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") {
-      sendDocument(task.managerId, input.file_id, `Материал 30% по задаче #${task.id}`);
-    } else {
-      sendMessage(task.managerId, `Материал 30%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
-    }
-
-    scheduleTaskReminder(task.id, "60");
-    return;
-  }
-
-  if (state.stageKey === "60") {
-    task.status = "60%";
-    task.timeline.shown60At = new Date().toISOString();
-    task.stageMaterials.sixty = input;
-    userStates.delete(chatId);
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Материал 60% отправлен.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
-    sendMessage(task.managerId, `Исполнитель отправил этап 60% по задаче #${task.id}.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") {
-      sendDocument(task.managerId, input.file_id, `Материал 60% по задаче #${task.id}`);
-    } else {
-      sendMessage(task.managerId, `Материал 60%:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
-    }
-
-    scheduleTaskReminder(task.id, "final");
-    return;
-  }
-
-  if (state.stageKey === "final") {
-    task.status = "На проверке";
-    task.timeline.submittedAt = new Date().toISOString();
-    task.stageMaterials.final = input;
-    userStates.delete(chatId);
-    await saveTaskToDb(task);
-
-    sendMessage(chatId, `Финальный материал отправлен на проверку.\n\n${formatTaskCard(task)}`, getMainKeyboard(false, true));
-    sendMessage(task.managerId, `Исполнитель сдал задачу #${task.id} на проверку.`, getManagerReviewTaskKeyboard(task.id));
-    if (input.type === "document") {
-      sendDocument(task.managerId, input.file_id, `Финальный материал по задаче #${task.id}`);
-    } else {
-      sendMessage(task.managerId, `Финальный материал:\n${input.value}`, getManagerReviewTaskKeyboard(task.id));
-    }
-
-    clearTaskReminder(task.id);
-  }
-}
-
-async function managerApproveTask(chatId, managerId, taskId) {
-  const task = tasks.find(item => item.id === taskId);
-  if (!task || task.managerId !== managerId) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  task.status = "Выполнена";
-  task.timeline.approvedAt = new Date().toISOString();
-  clearTaskReminder(task.id);
-  await saveTaskToDb(task);
-
-  sendMessage(chatId, `Результат по задаче #${task.id} принят.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
-  sendMessage(task.assignedExecutorId, `Менеджер принял результат по задаче #${task.id}.`, getMainKeyboard(false, true));
-}
-
-async function managerSendFixes(chatId, managerId, taskId) {
-  const task = tasks.find(item => item.id === taskId);
-  if (!task || task.managerId !== managerId) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  task.status = "Правки";
-  task.timeline.returnedForFixesAt = new Date().toISOString();
-  clearTaskReminder(task.id);
-  await saveTaskToDb(task);
-
-  sendMessage(chatId, `Задача #${task.id} отправлена на правки.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
-  sendMessage(task.assignedExecutorId, `По задаче #${task.id} пришли правки. Свяжись с менеджером: ${task.managerContact}`, getExecutorTaskActionKeyboard(task));
-
-  scheduleTaskReminder(task.id, "final");
-}
-
-async function managerMarkUnpaid(chatId, managerId, taskId) {
-  const task = tasks.find(item => item.id === taskId);
-  if (!task || task.managerId !== managerId) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  task.status = "Не оплачена";
-  task.timeline.unpaidAt = new Date().toISOString();
-  await saveTaskToDb(task);
-
-  sendMessage(chatId, `Задача #${task.id} отмечена как не оплачена.\n\n${formatTaskCard(task)}`, getManagerReviewTaskKeyboard(task.id));
-  sendMessage(task.assignedExecutorId, `По задаче #${task.id} статус оплаты: не оплачена.`, getMainKeyboard(false, true));
-}
-
-async function managerMarkPaid(chatId, managerId, taskId) {
-  const task = tasks.find(item => item.id === taskId);
-  if (!task || task.managerId !== managerId) {
-    sendMessage(chatId, "Задача не найдена.");
-    return;
-  }
-
-  task.status = "Оплачена";
-  task.timeline.paidAt = new Date().toISOString();
-  await saveTaskToDb(task);
-
-  sendMessage(chatId, `Задача #${task.id} отмечена как оплачена.\n\n${formatTaskCard(task)}`, getMainKeyboard(true));
-  sendMessage(task.assignedExecutorId, `По задаче #${task.id} статус оплаты: оплачена.`, getMainKeyboard(false, true));
-}
-
-/* -------------------- Main handlers -------------------- */
-
-async function handleTextMessage(chatId, text, from, message) {
-  const state = userStates.get(chatId);
-  const executorProfile = executors.get(chatId);
-
-  if (text === "/start") {
-    userStates.delete(chatId);
-    sendMessage(chatId, "Привет. Выбери роль:", getMainKeyboard(managers.has(chatId), Boolean(executorProfile)));
-    return;
-  }
-
-  if (state?.type === "manager_contact") {
-    await handleManagerContactStep(chatId, text, from);
-    return;
-  }
-
-  if (state?.type === "create_task") {
-    await handleTaskCreationStep(chatId, message, state);
-    return;
-  }
-
-  if (state?.type === "executor_registration") {
-    await handleExecutorRegistrationStep(chatId, message, state);
-    return;
-  }
-
-  if (state?.type === "manager_review_executor") {
-    await handleManagerReviewStep(chatId, text, from, state);
-    return;
-  }
-
-  if (state?.type === "task_stage_material") {
-    await handleTaskStageMaterial(chatId, message, state);
-    return;
-  }
-
-  const actionMatch = text?.match(/^Действие по задаче #(\d+):\s(.+)$/);
-  if (actionMatch) {
-    await updateTaskStatusByExecutor(chatId, Number(actionMatch[1]), actionMatch[2]);
-    return;
-  }
-
-  const approveMatch = text?.match(/^Принять результат #(\d+)$/);
-  if (approveMatch && managers.has(chatId)) {
-    await managerApproveTask(chatId, chatId, Number(approveMatch[1]));
-    return;
-  }
-
-  const fixesMatch = text?.match(/^Отправить на правки #(\d+)$/);
-  if (fixesMatch && managers.has(chatId)) {
-    await managerSendFixes(chatId, chatId, Number(fixesMatch[1]));
-    return;
-  }
-
-  const unpaidMatch = text?.match(/^Отметить не оплачена #(\d+)$/);
-  if (unpaidMatch && managers.has(chatId)) {
-    await managerMarkUnpaid(chatId, chatId, Number(unpaidMatch[1]));
-    return;
-  }
-
-  const paidMatch = text?.match(/^Отметить оплачена #(\d+)$/);
-  if (paidMatch && managers.has(chatId)) {
-    await managerMarkPaid(chatId, chatId, Number(paidMatch[1]));
-    return;
-  }
-
-  if (text === "Я исполнитель") {
-    waitingForManagerPassword.delete(chatId);
-
-    if (executorProfile) {
-      sendMessage(
-        chatId,
-        `Режим исполнителя включён.\n\n${formatExecutorProfile(executorProfile)}`,
-        getMainKeyboard(false, true)
-      );
-      return;
-    }
-
-    sendMessage(chatId, "Начинаем регистрацию исполнителя.", getMainKeyboard(false));
-    startExecutorRegistration(chatId, from, null);
-    return;
-  }
-
-  if (text === "Моя анкета") {
-    if (!executorProfile) {
-      sendMessage(chatId, "Анкета пока не заполнена. Нажми Я исполнитель, чтобы начать.", getMainKeyboard(false));
-      return;
-    }
-
-    sendMessage(chatId, formatExecutorProfile(executorProfile), getMainKeyboard(false, true));
-
-    if (executorProfile.paymentFile?.type === "document") {
-      sendDocument(chatId, executorProfile.paymentFile.file_id, "Твой файл с реквизитами");
-    }
-    return;
-  }
-
-  if (text === "Редактировать анкету") {
-    startExecutorRegistration(chatId, from, executorProfile || null);
-    return;
-  }
-
-  if (text === "Новые задачи") {
-    if (!executorProfile || executorProfile.status !== "Подтверждён") {
-      sendMessage(chatId, "Новые задачи доступны только подтверждённым исполнителям.", getMainKeyboard(false, Boolean(executorProfile)));
-      return;
-    }
-
-    const relevantTasks = tasks.filter(task => {
-      return (
-        (task.status === "Ждёт исполнителя" || task.status === "Есть отклики") &&
-        executorProfile.verifiedSpecializations?.some(spec => task.categories.includes(spec))
-      );
-    });
-
-    if (!relevantTasks.length) {
-      sendMessage(chatId, "Сейчас новых задач нет.", getMainKeyboard(false, true));
-      return;
-    }
-
-    const summary = relevantTasks
-      .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.deadline} | ${task.price}`)
-      .join("\n");
-
-    sendMessage(chatId, `Новые задачи:\n\n${summary}`, getMainKeyboard(false, true));
-    return;
-  }
-
-  if (text === "Мои отклики") {
-    if (!executorProfile) {
-      sendMessage(chatId, "Сначала заполни анкету.", getMainKeyboard(false));
-      return;
-    }
-
-    const history = executorProfile.responseHistory || [];
-
-    if (!history.length) {
-      sendMessage(chatId, "У тебя пока нет откликов.", getMainKeyboard(false, true));
-      return;
-    }
-
-    const summary = history
-      .map(item => `#${item.taskId} — ${item.taskTitle} | ${item.decision}`)
-      .join("\n");
-
-    sendMessage(chatId, `Твои отклики:\n\n${summary}`, getMainKeyboard(false, true));
-    return;
-  }
-
-  if (text === "Я менеджер") {
-    waitingForManagerPassword.add(chatId);
-    sendMessage(chatId, "Введи пароль менеджера.");
-    return;
-  }
-
-  if (waitingForManagerPassword.has(chatId)) {
-    if (text === MANAGER_PASSWORD) {
-      waitingForManagerPassword.delete(chatId);
-      if (!ensureManagerContact(chatId, from)) return;
-      managers.add(chatId);
-      sendMessage(chatId, "Доступ менеджера открыт.", getMainKeyboard(true));
-    } else {
-      sendMessage(chatId, "Неверный пароль. Попробуй ещё раз.");
-    }
-    return;
-  }
-
-  if (managers.has(chatId)) {
-    if (text === "Создать задачу") {
-      startTaskCreation(chatId, from);
-      return;
-    }
-
-    if (text === "Опубликовать последнюю задачу") {
-      const task = getLastManagerTask(chatId);
-      if (!task) {
-        sendMessage(chatId, "У тебя нет задач для публикации.", getMainKeyboard(true));
-        return;
+  const handleExecutorRegister = async () => {
+    if (!validateExecutorForm()) return;
+
+    try {
+      setIsExecutorSubmitting(true);
+
+      const telegram = (window as any)?.Telegram?.WebApp;
+      const user = telegram?.initDataUnsafe?.user;
+
+      const response = await fetch(`${API_BASE}/api/executors/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: user?.id || null,
+          username: user?.username || null,
+          telegramContact: executorContact.trim(),
+          fullName: executorFullName.trim(),
+          specializations: executorSpecializations,
+          portfolio: executorPortfolio.trim() || null,
+          paymentMethod: executorPaymentMethod.trim(),
+          paymentDetails: executorPaymentDetails.trim(),
+          unavailableDays: executorUnavailableDays,
+          unavailableTime: executorUnavailableTime.trim() || ""
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Registration failed");
       }
 
-      await publishTaskToExecutors(chatId, task);
-      return;
+      setExecutor(data.executor || null);
+      fillExecutorFormFromProfile(data.executor || null);
+      setScreen("executorPending");
+    } catch (error) {
+      console.error("Executor registration failed:", error);
+      setExecutorFormError("Не удалось отправить анкету");
+    } finally {
+      setIsExecutorSubmitting(false);
     }
-
-    if (text === "Отклики последней задачи") {
-      const task = getLastManagerTask(chatId);
-      if (!task) {
-        sendMessage(chatId, "У тебя пока нет задач.", getMainKeyboard(true));
-        return;
-      }
-
-      showResponsesForTask(chatId, task);
-      return;
-    }
-
-    if (text === "Мои задачи") {
-      const managerTasks = tasks.filter(task => task.managerId === chatId);
-
-      if (!managerTasks.length) {
-        sendMessage(chatId, "У тебя пока нет созданных задач.", getMainKeyboard(true));
-        return;
-      }
-
-      const summary = managerTasks
-        .map(task => `#${task.id} — ${task.title} | ${formatCategories(task.categories)} | ${task.status} | отклики: ${task.responses?.length || 0}`)
-        .join("\n");
-
-      sendMessage(chatId, `Твои задачи:\n\n${summary}`, getMainKeyboard(true));
-      return;
-    }
-
-    if (text === "Заявки в исполнители") {
-      showNextPendingExecutor(chatId);
-      return;
-    }
-
-    if (text === "В меню менеджера") {
-      sendMessage(chatId, "Меню менеджера.", getMainKeyboard(true));
-      return;
-    }
-
-    sendMessage(chatId, "Ты в режиме менеджера. Выбери действие из меню.", getMainKeyboard(true));
-    return;
-  }
-
-  sendMessage(chatId, "Напиши /start, чтобы выбрать роль.");
-}
-
-async function handleCallbackQuery(callbackQuery) {
-  const data = callbackQuery.data;
-  const chatId = callbackQuery.message?.chat?.id;
-  const from = callbackQuery.from;
-
-  if (!chatId || !data) return;
-
-  if (data.startsWith("assign_")) {
-    const parts = data.split("_");
-    const taskId = Number(parts[1]);
-    const executorId = Number(parts[2]);
-
-    if (!managers.has(from.id)) {
-      sendMessage(chatId, "Назначать исполнителя может только менеджер.");
-      answerCallback(callbackQuery.id, "Недостаточно прав");
-      return;
-    }
-
-    await assignExecutorToTask(chatId, from.id, taskId, executorId);
-    answerCallback(callbackQuery.id, "Исполнитель назначен");
-    return;
-  }
-
-  if (data.startsWith("stage_")) {
-    const parts = data.split("_");
-    const stageKey = parts[1];
-    const answer = parts[2];
-    const taskId = Number(parts[3]);
-    const task = tasks.find(t => t.id === taskId);
-
-    if (!task || task.assignedExecutorId !== from.id) {
-      answerCallback(callbackQuery.id, "Задача не найдена");
-      return;
-    }
-
-    if (answer === "no") {
-      answerCallback(callbackQuery.id, "Ок");
-      return;
-    }
-
-    if (stageKey === "read") {
-      await updateTaskStatusByExecutor(from.id, taskId, "Изучил ТЗ");
-      answerCallback(callbackQuery.id, "Отмечено");
-      return;
-    }
-
-    if (stageKey === "inwork") {
-      await updateTaskStatusByExecutor(from.id, taskId, "Взял в работу");
-      answerCallback(callbackQuery.id, "Отмечено");
-      return;
-    }
-
-    if (stageKey === "30") {
-      startStageMaterialCollection(from.id, taskId, "30");
-      answerCallback(callbackQuery.id, "Жду материал");
-      return;
-    }
-
-    if (stageKey === "60") {
-      startStageMaterialCollection(from.id, taskId, "60");
-      answerCallback(callbackQuery.id, "Жду материал");
-      return;
-    }
-
-    if (stageKey === "final") {
-      startStageMaterialCollection(from.id, taskId, "final");
-      answerCallback(callbackQuery.id, "Жду финал");
-      return;
-    }
-  }
-
-  const executor = executors.get(from.id);
-
-  if (!executor || executor.status !== "Подтверждён") {
-    sendMessage(chatId, "Откликаться на задачи могут только подтверждённые исполнители.");
-    answerCallback(callbackQuery.id, "Нет доступа");
-    return;
-  }
-
-  const [action, rawTaskId] = data.split("_");
-  const taskId = Number(rawTaskId);
-  const task = tasks.find(item => item.id === taskId);
-
-  if (!task) {
-    sendMessage(chatId, "Задача не найдена.");
-    answerCallback(callbackQuery.id, "Задача не найдена");
-    return;
-  }
-
-  const existingResponse = task.responses.find(item => item.executorId === from.id);
-  if (existingResponse) {
-    sendMessage(chatId, "Ты уже ответил на эту задачу.");
-    answerCallback(callbackQuery.id, "Ты уже ответил");
-    return;
-  }
-
-  const decision = action === "accept" ? "Принял" : "Отклонил";
-
-  const response = {
-    executorId: from.id,
-    executorName: executor.fullName || from.first_name || "Без имени",
-    executorContact: getExecutorContactFromProfile(executor),
-    decision,
-    createdAt: new Date().toISOString()
   };
 
-  task.responses.push(response);
+  const handleExecutorUpdate = async () => {
+    if (!executor || !validateExecutorForm()) return;
 
-  executor.responseHistory = executor.responseHistory || [];
-  executor.responseHistory.push({
-    taskId: task.id,
-    taskTitle: task.title,
-    decision,
-    createdAt: new Date().toISOString()
-  });
+    try {
+      setIsExecutorSubmitting(true);
+      setExecutorInfo("");
+      setExecutorError("");
 
-  executors.set(from.id, executor);
-  await saveExecutorToDb(executor);
+      const response = await fetch(`${API_BASE}/api/executors/update`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          telegramId: executor.telegramId,
+          fullName: executorFullName.trim(),
+          telegramContact: executorContact.trim(),
+          specializations: executorSpecializations,
+          portfolio: executorPortfolio.trim() || null,
+          paymentMethod: executorPaymentMethod.trim(),
+          paymentDetails: executorPaymentDetails.trim(),
+          unavailableDays: executorUnavailableDays,
+          unavailableTime: executorUnavailableTime.trim() || ""
+        })
+      });
 
-  if (getAcceptedResponses(task).length > 0 && task.status === "Ждёт исполнителя") {
-    task.status = "Есть отклики";
-  }
+      const data = await response.json();
 
-  await saveTaskToDb(task);
+      if (!response.ok || !data?.executor) {
+        throw new Error(data?.error || "Update failed");
+      }
 
-  sendMessage(chatId, `Твой отклик по задаче #${task.id} сохранён: ${decision}.`, getMainKeyboard(false, true));
+      setExecutor(data.executor);
+      fillExecutorFormFromProfile(data.executor);
+      setIsExecutorEditing(false);
+      setExecutorInfo("Анкета обновлена");
+    } catch (error) {
+      console.error("Executor update failed:", error);
+      setExecutorFormError("Не удалось обновить анкету");
+    } finally {
+      setIsExecutorSubmitting(false);
+    }
+  };
 
-  sendMessage(
-    task.managerId,
-    `Новый отклик по задаче #${task.id}.\n\nИсполнитель: ${executor.fullName}\nКонтакт: ${getExecutorContactFromProfile(executor)}\nРешение: ${decision}`,
-    getMainKeyboard(true)
+  const renderExecutorForm = (submitLabel: string, onSubmit: () => void, includeBack = true) => (
+    <>
+      {includeBack ? (
+        <button
+          onClick={() => setScreen("executorRegister")}
+          className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70"
+        >
+          Назад
+        </button>
+      ) : null}
+
+      <div className="mb-6">
+        <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Анкета исполнителя</h2>
+        <p className="mt-3 text-sm text-white/45">Заполни анкету, чтобы менеджер мог проверить тебя и допустить к задачам.</p>
+      </div>
+
+      <div className="space-y-3">
+        <FormInput value={executorFullName} onChange={(e) => setExecutorFullName(e.target.value)} placeholder="Имя и фамилия" />
+
+        <FormInput value={executorContact} onChange={(e) => setExecutorContact(e.target.value)} placeholder="Контакт для связи" />
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Специализации</div>
+          <div className="flex flex-wrap gap-2">
+            {SPECIALIZATION_OPTIONS.map((item) => {
+              const active = executorSpecializations.includes(item);
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => toggleExecutorSpecialization(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <FormInput
+          value={executorPortfolio}
+          onChange={(e) => setExecutorPortfolio(e.target.value)}
+          placeholder="Ссылка на портфолио (необязательно)"
+        />
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
+          <div className="flex flex-wrap gap-2">
+            {PAYMENT_OPTIONS.map((item) => {
+              const active = executorPaymentMethod === item;
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => setExecutorPaymentMethod(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-2 text-sm text-white/55">{paymentPrompt.label}</div>
+          {paymentPrompt.helper ? <div className="mb-3 text-xs text-white/35">{paymentPrompt.helper}</div> : null}
+          <FormTextarea
+            value={executorPaymentDetails}
+            onChange={(e) => setExecutorPaymentDetails(e.target.value)}
+            placeholder={paymentPrompt.placeholder}
+          />
+        </div>
+
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-3 text-sm text-white/55">Недоступные дни (необязательно)</div>
+          <div className="flex flex-wrap gap-2">
+            {DAY_OPTIONS.map((item) => {
+              const active = executorUnavailableDays.includes(item);
+              return (
+                <button
+                  type="button"
+                  key={item}
+                  onClick={() => toggleExecutorDay(item)}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-sm transition",
+                    active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65"
+                  )}
+                >
+                  {item}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <FormInput
+          value={executorUnavailableTime}
+          onChange={(e) => setExecutorUnavailableTime(e.target.value)}
+          placeholder="Часы недоступности (необязательно)"
+        />
+
+        {executorFormError ? (
+          <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorFormError}</div>
+        ) : null}
+
+        {executorInfo ? (
+          <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div>
+        ) : null}
+
+        <button
+          onClick={onSubmit}
+          disabled={isExecutorSubmitting}
+          className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+        >
+          {isExecutorSubmitting ? "Сохраняю..." : submitLabel}
+        </button>
+      </div>
+    </>
   );
 
-  answerCallback(callbackQuery.id, `Сохранено: ${decision}`);
+  return (
+    <div className="min-h-screen bg-[#09090B] text-white" style={{ fontFamily: "Involve, Inter, system-ui, sans-serif" }}>
+      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-[radial-gradient(circle_at_top,rgba(86,255,239,0.14),transparent_34%),linear-gradient(180deg,#0b0b10_0%,#09090b_100%)]">
+        <AnimatePresence mode="wait">
+          {screen === "welcome" && (
+            <motion.div key="welcome" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <div className="mb-10 mt-auto">
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">ЛЭНД</div>
+                <h1 className="max-w-[320px] text-[34px] font-semibold leading-[1.02] tracking-[-0.04em] text-white">Привет! Это креативный конвейер ЛЭНД</h1>
+                <p className="mt-4 text-base text-white/45">Выбери роль</p>
+              </div>
+
+              <div className="mb-auto space-y-3">
+                <RoleButton label="Я менеджер" onClick={() => setScreen("managerPassword")} />
+                <RoleButton label="Я исполнитель" onClick={() => { setScreen("executorLoading"); void loadExecutor(); }} />
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "executorLoading" && (
+            <motion.div key="executorLoading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
+              <div className="mb-4 h-16 w-16 rounded-full bg-[#56FFEF]/15 blur-[2px]" />
+              <div className="text-base text-white/75">Проверяем ваш аккаунт исполнителя…</div>
+            </motion.div>
+          )}
+
+          {screen === "executorRegister" && (
+            <motion.div key="executorRegister" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
+
+              <div className="mb-8">
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вы ещё не зарегистрированы</h2>
+                <p className="mt-3 text-sm text-white/45">Заполни анкету исполнителя или войди по ID, если ты уже был зарегистрирован раньше.</p>
+              </div>
+
+              <div className="space-y-3">
+                <button onClick={() => { resetExecutorForm(); setScreen("executorForm"); }} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Заполнить анкету</button>
+                <button onClick={() => { setExecutorError(""); setExecutorInfo(""); setExecutorCode(""); setScreen("executorCodeLogin"); }} className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10">У меня уже есть ID исполнителя</button>
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "executorForm" && (
+            <motion.div key="executorForm" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              {renderExecutorForm("Отправить анкету", handleExecutorRegister, true)}
+            </motion.div>
+          )}
+
+          {screen === "executorCodeLogin" && (
+            <motion.div key="executorCodeLogin" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("executorRegister")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
+              <div className="mb-8">
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вход по ID исполнителя</h2>
+                <p className="mt-3 text-sm text-white/45">Введи резервный ID, который был присвоен тебе при регистрации.</p>
+              </div>
+              <div className="space-y-3">
+                <FormInput value={executorCode} onChange={(e) => setExecutorCode(e.target.value.toUpperCase())} placeholder="Например: EX-7K3D9A" />
+                {executorError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorError}</div> : null}
+                <button onClick={() => void handleExecutorCodeLogin()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Войти</button>
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "executorPending" && (
+            <motion.div key="executorPending" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
+              <div className="mb-8">
+                <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Анкета на модерации</h2>
+                <p className="mt-3 text-sm text-white/45">Менеджер проверяет твою анкету. После подтверждения ты получишь доступ к задачам.</p>
+              </div>
+              <div className="space-y-3">
+                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-base text-white">{executor?.executorCode || "—"}</div></div>
+                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-base text-white">{executor?.telegramContact || "—"}</div></div>
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "executorApp" && (
+            <motion.div key="executorApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col">
+              <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                    <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">{executorBottomTab === "tasks" ? "Задачи" : "Профиль"}</h2>
+                  </div>
+                  {executorBottomTab === "profile" ? (
+                    <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(true); }} className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80"><Pencil className="h-4 w-4" />Редактировать</button>
+                  ) : null}
+                </div>
+
+                {executorBottomTab === "tasks" ? (
+                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    <button onClick={() => setExecutorTaskTopTab("new")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <CircleDot className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Новые</div>
+                    </button>
+                    <button onClick={() => setExecutorTaskTopTab("active")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "active" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <Clock3 className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Активные</div>
+                    </button>
+                    <button onClick={() => setExecutorTaskTopTab("archived")} className={cn("rounded-[18px] px-3 py-3 text-left transition", executorTaskTopTab === "archived" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                      <Archive className="mb-2 h-4 w-4" />
+                      <div className="text-[12px] font-medium leading-4">Архив</div>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex-1 px-5 pb-28 pt-4">
+                {executorBottomTab === "tasks" ? (
+                  <>
+                    {isLoadingExecutorTasks ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
+                    ) : executorTasksError ? (
+                      <div className="space-y-3">
+                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorTasksError}</div>
+                        <button onClick={() => executor?.telegramId ? void loadExecutorTasks(Number(executor.telegramId)) : null} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button>
+                      </div>
+                    ) : executorVisibleTasks.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {executorVisibleTasks.map((task) => (
+                          <div key={task.id} className="space-y-3">
+                            <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                            {executorTaskTopTab === "new" ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "accept")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять задачу</button>
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "decline")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Скрыть</button>
+                              </div>
+                            ) : executorTaskTopTab === "active" ? (
+                              <>
+                                <PipelineView task={task} compact />
+                                {task.status === "Правки" && task.stageMaterials?.fixesNote?.value ? (
+                                  <button onClick={() => setSelectedTask(task)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">
+                                    Посмотреть правки
+                                  </button>
+                                ) : null}
+                                {executorActionButtonLabel(task.status) ? (
+                                  <button onClick={() => void handleExecutorStageAction(task)} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">
+                                    {executorActionButtonLabel(task.status)}
+                                  </button>
+                                ) : null}
+                              </>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {!isExecutorEditing ? (
+                      <div className="space-y-3">
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
+                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
+                        {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-8 flex items-start justify-between gap-4">
+                          <div>
+                            <div className="mb-4 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/45">Исполнитель</div>
+                            <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Редактирование анкеты</h2>
+                          </div>
+                          <button onClick={() => { fillExecutorFormFromProfile(executor); setExecutorFormError(""); setExecutorInfo(""); setIsExecutorEditing(false); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Отмена</button>
+                        </div>
+                        {renderExecutorForm("Сохранить изменения", handleExecutorUpdate, false)}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                    <BottomBadge count={executorTasksBadge} />
+                    <Briefcase className="h-5 w-5" />
+                    <span className="text-[10px] leading-none">Задачи</span>
+                  </button>
+                  <button onClick={() => setExecutorBottomTab("profile")} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "profile" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                    <Trophy className="h-5 w-5" />
+                    <span className="text-[10px] leading-none">Профиль</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "managerPassword" && (
+            <motion.div key="managerPassword" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col px-6 pb-8 pt-12">
+              <button onClick={() => setScreen("welcome")} className="mb-8 w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70">Назад</button>
+              <div className="mb-8">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5"><Lock className="h-5 w-5 text-white/70" /></div>
+                <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-white">Вход менеджера</h2>
+                <p className="mt-2 text-sm text-white/45">Введи пароль, чтобы открыть менеджерский интерфейс</p>
+              </div>
+              <div className="space-y-3">
+                <FormInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль" />
+                {passwordError ? <div className="px-1 text-sm text-rose-300">{passwordError}</div> : null}
+                <button onClick={handleManagerLogin} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]">Войти</button>
+              </div>
+            </motion.div>
+          )}
+
+          {screen === "managerApp" && (
+            <motion.div key="managerApp" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.22 }} className="flex min-h-screen flex-col">
+              <div className="sticky top-0 z-10 border-b border-white/5 bg-[#0b0b10]/90 px-5 pb-4 pt-6 backdrop-blur-xl">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : "Задачи"}</div>
+                  </div>
+                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                </div>
+                {activeBottomTab === "tasks" && (
+                  <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    {topTabs.map((tab) => {
+                      const Icon = tab.icon;
+                      const active = activeTopTab === tab.key;
+                      return (
+                        <button key={tab.key} onClick={() => setActiveTopTab(tab.key)} className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}>
+                          <Icon className="mb-2 h-4 w-4" />
+                          <div className="text-[12px] font-medium leading-4">{tab.label}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {activeBottomTab === "executors" && (
+                  <div className="grid grid-cols-2 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    <button
+                      onClick={() => setManagerExecutorsTopTab("pending")}
+                      className={cn(
+                        "rounded-[18px] px-3 py-3 text-left transition",
+                        managerExecutorsTopTab === "pending" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                      )}
+                    >
+                      <div className="text-[12px] font-medium leading-4">Заявки</div>
+                    </button>
+                    <button
+                      onClick={() => setManagerExecutorsTopTab("registry")}
+                      className={cn(
+                        "rounded-[18px] px-3 py-3 text-left transition",
+                        managerExecutorsTopTab === "registry" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                      )}
+                    >
+                      <div className="text-[12px] font-medium leading-4">Реестр</div>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 px-5 pb-28 pt-4">
+                {activeBottomTab === "tasks" ? (
+                  <>
+                    <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
+                    {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{managerTasksError}</div> : null}
+                    {isLoadingTasks ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
+                    ) : tasksError ? (
+                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
+                    ) : visibleTasks.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        <AnimatePresence mode="popLayout">
+                          {visibleTasks.map((task) => (
+                            <div key={task.id} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.28)]">
+                              <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                              {activeTopTab === "waiting" ? (
+                                (() => {
+                                  const managerTask = managerTasks.find((item) => item.id === task.id) || task;
+                                  const acceptedResponses = (managerTask.responses || []).filter((item) => item.decision === "Принял");
+                                  return acceptedResponses.length ? (
+                                    <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
+                                      <div className="text-sm text-white/55">Откликнулись исполнители</div>
+                                      {acceptedResponses.map((response) => {
+                                        const rank = getApprovedExecutorRank(response.executorId);
+                                        return (
+                                          <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                              <div>
+                                                <div className="text-sm font-medium text-white">{response.executorName}</div>
+                                                <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                  {rank ? (
+                                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">
+                                                      Место в рейтинге #{rank}
+                                                    </div>
+                                                  ) : null}
+                                                  {response.rating != null ? (
+                                                    <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">
+                                                      Рейтинг {response.rating}
+                                                    </div>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                              <button
+                                                onClick={() => void handleAssignTask(task.id, response.executorId)}
+                                                className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black"
+                                              >
+                                                Подтвердить
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null;
+                                })()
+                              ) : null}
+                              {activeTopTab === "active" ? (
+                                <>
+                                  <PipelineView task={task} compact />
+                                  {task.status === "На проверке" ? (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять</button>
+                                      <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
+                                    </div>
+                                  ) : null}
+                                  {task.status === "Счёт загружен" ? (
+                                    <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Счёт оплачен</button>
+                                  ) : null}
+                                  {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
+                                      <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Оплачена</button>
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          ))}
+                        </AnimatePresence>
+                      </div>
+                    )}
+                  </>
+                ) : activeBottomTab === "executors" ? (
+                  <>
+                    {managerExecutorsTopTab === "pending" ? (
+                      <>
+                        {isLoadingPendingExecutors ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                            Загружаю заявки исполнителей...
+                          </div>
+                        ) : pendingExecutorsError ? (
+                          <div className="space-y-3">
+                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                              {pendingExecutorsError}
+                            </div>
+                            <button
+                              onClick={() => void loadPendingExecutors()}
+                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                            >
+                              Повторить загрузку
+                            </button>
+                          </div>
+                        ) : !pendingExecutors.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            Сейчас нет новых анкет на модерации.
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="space-y-3">
+                              {pendingExecutors.map((profile) => {
+                                const active = Number(profile.telegramId) === Number(selectedPendingTelegramId);
+                                return (
+                                  <button
+                                    key={String(profile.telegramId)}
+                                    onClick={() => openPendingExecutor(profile)}
+                                    className={cn(
+                                      "w-full rounded-[28px] border p-4 text-left transition",
+                                      active
+                                        ? "border-[#56FFEF]/30 bg-[#56FFEF]/10"
+                                        : "border-white/10 bg-white/[0.04] hover:bg-white/[0.06]"
+                                    )}
+                                  >
+                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                      На модерации
+                                    </div>
+                                    <div className="text-base font-semibold text-white">
+                                      {profile.fullName || "Без имени"}
+                                    </div>
+                                    <div className="mt-2 text-sm text-white/55">
+                                      {(profile.specializations || []).join(", ") || "—"}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {selectedPendingExecutor ? (
+                              <div className="space-y-3 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                                <div>
+                                  <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                    Карточка исполнителя
+                                  </div>
+                                  <div className="text-xl font-semibold text-white">
+                                    {selectedPendingExecutor.fullName || "Без имени"}
+                                  </div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID исполнителя</div>
+                                  <div>{selectedPendingExecutor.executorCode || "—"}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div>
+                                  <div>{selectedPendingExecutor.telegramContact || "—"}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+                                  <div className="break-all">{selectedPendingExecutor.portfolio || "—"}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ выплаты</div>
+                                  <div>{selectedPendingExecutor.paymentMethod || "—"}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
+                                  <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(selectedPendingExecutor.paymentDetails)}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
+                                  <div>{selectedPendingExecutor.unavailableDays?.length ? selectedPendingExecutor.unavailableDays.join(", ") : "—"}</div>
+                                </div>
+
+                                <div className="rounded-2xl bg-black/20 p-3">
+                                  <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные часы</div>
+                                  <div>{selectedPendingExecutor.unavailableTime || "—"}</div>
+                                </div>
+
+                                <div className="rounded-[24px] border border-white/10 bg-white/5 p-4">
+                                  <div className="mb-3 text-sm text-white/55">Подтверждённые специализации</div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {SPECIALIZATION_OPTIONS.map((item) => {
+                                      const active = moderationVerifiedSpecializations.includes(item);
+                                      return (
+                                        <button
+                                          type="button"
+                                          key={item}
+                                          onClick={() => toggleModerationVerifiedSpecialization(item)}
+                                          className={cn(
+                                            "rounded-full border px-3 py-2 text-sm transition",
+                                            active
+                                              ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]"
+                                              : "border-white/10 bg-white/5 text-white/65"
+                                          )}
+                                        >
+                                          {item}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-3">
+                                  <FormInput type="number" min="1" max="5" value={moderationAccuracy} onChange={(e) => setModerationAccuracy(e.target.value)} placeholder="ТЗ" />
+                                  <FormInput type="number" min="1" max="5" value={moderationSpeed} onChange={(e) => setModerationSpeed(e.target.value)} placeholder="Сроки" />
+                                  <FormInput type="number" min="1" max="5" value={moderationAesthetics} onChange={(e) => setModerationAesthetics(e.target.value)} placeholder="Эстетика" />
+                                </div>
+
+                                <div className="text-xs text-white/35">
+                                  Оценка: ТЗ × 0.5, сроки × 0.35, эстетика × 0.15. Новичок получает приоритет на первые 2 заказа.
+                                </div>
+
+                                {moderationMessage ? (
+                                  <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+                                    {moderationMessage}
+                                  </div>
+                                ) : null}
+
+                                <div className="grid grid-cols-2 gap-3">
+                                  <button
+                                    onClick={() => void handleModerateExecutor("reject")}
+                                    disabled={isModeratingExecutor}
+                                    className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10 disabled:opacity-60"
+                                  >
+                                    Отклонить
+                                  </button>
+                                  <button
+                                    onClick={() => void handleModerateExecutor("approve")}
+                                    disabled={isModeratingExecutor}
+                                    className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                                  >
+                                    {isModeratingExecutor ? "Сохраняю..." : "Подтвердить"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {isLoadingApprovedExecutors ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                            Загружаю реестр исполнителей...
+                          </div>
+                        ) : approvedExecutorsError ? (
+                          <div className="space-y-3">
+                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                              {approvedExecutorsError}
+                            </div>
+                            <button
+                              onClick={() => void loadApprovedExecutors()}
+                              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                            >
+                              Повторить загрузку
+                            </button>
+                          </div>
+                        ) : !approvedExecutors.length ? (
+                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                            В реестре пока нет подтверждённых исполнителей.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {isManagerEditingRegistryExecutor ? (
+                              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                                <div className="mb-4 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Редактирование исполнителя</div>
+                                    <div className="text-base font-semibold text-white">{selectedApprovedExecutor?.fullName || "Исполнитель"}</div>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setIsManagerEditingRegistryExecutor(false);
+                                      setManagerExecutorMessage("");
+                                    }}
+                                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70"
+                                  >
+                                    Отмена
+                                  </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <FormInput value={managerEditFullName} onChange={(e) => setManagerEditFullName(e.target.value)} placeholder="Имя и фамилия" />
+                                  <FormInput value={managerEditContact} onChange={(e) => setManagerEditContact(e.target.value)} placeholder="Контакт" />
+                                  <FormInput value={managerEditPortfolio} onChange={(e) => setManagerEditPortfolio(e.target.value)} placeholder="Портфолио" />
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Специализации</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {SPECIALIZATION_OPTIONS.map((item) => {
+                                        const active = managerEditSpecializations.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-spec-${item}`}
+                                            onClick={() => toggleManagerEditSpecialization(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Подтверждённые специализации</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {SPECIALIZATION_OPTIONS.map((item) => {
+                                        const active = managerEditVerifiedSpecializations.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-vspec-${item}`}
+                                            onClick={() => toggleManagerEditVerifiedSpecialization(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {PAYMENT_OPTIONS.map((item) => {
+                                        const active = managerEditPaymentMethod === item;
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-pay-${item}`}
+                                            onClick={() => setManagerEditPaymentMethod(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <FormTextarea
+                                    value={managerEditPaymentDetails}
+                                    onChange={(e) => setManagerEditPaymentDetails(e.target.value)}
+                                    placeholder={getPaymentPrompt(managerEditPaymentMethod).placeholder}
+                                  />
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-2 text-sm text-white/55">Договор</div>
+                                    <FormTextarea
+                                      value={managerEditContractData}
+                                      onChange={(e) => setManagerEditContractData(e.target.value)}
+                                      placeholder="Договор с исполнителем: ссылка, описание или идентификатор файла"
+                                    />
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <div>
+                                        <div className="text-sm text-white/55">Счета на оплату</div>
+                                        <div className="text-xs text-white/40">Загружено: {managerEditInvoices.length}</div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setManagerEditInvoices((prev) => [...prev, { value: '', createdAt: new Date().toISOString() }])}
+                                        className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/80"
+                                      >
+                                        Добавить счёт на оплату
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {managerEditInvoices.length ? managerEditInvoices.map((invoice, invoiceIndex) => (
+                                        <div key={`invoice-${invoiceIndex}`} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                                          <div className="mb-2 flex items-center justify-between gap-3">
+                                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">
+                                              Счёт #{invoiceIndex + 1}
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => setManagerEditInvoices((prev) => prev.filter((_, idx) => idx !== invoiceIndex))}
+                                              className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70"
+                                            >
+                                              Удалить
+                                            </button>
+                                          </div>
+                                          <FormInput
+                                            value={invoice.value}
+                                            onChange={(e) => setManagerEditInvoices((prev) => prev.map((item, idx) => idx === invoiceIndex ? { ...item, value: e.target.value } : item))}
+                                            placeholder="Файл, ссылка или комментарий к счёту"
+                                          />
+                                        </div>
+                                      )) : (
+                                        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                                          Счета пока не добавлены.
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                    <div className="mb-3 text-sm text-white/55">Недоступные дни</div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {DAY_OPTIONS.map((item) => {
+                                        const active = managerEditUnavailableDays.includes(item);
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`mgr-day-${item}`}
+                                            onClick={() => toggleManagerEditDay(item)}
+                                            className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                          >
+                                            {item}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  <FormInput value={managerEditUnavailableTime} onChange={(e) => setManagerEditUnavailableTime(e.target.value)} placeholder="Недоступные часы" />
+
+                                  <div className="grid grid-cols-3 gap-3">
+                                    <FormInput value={managerEditReviewAccuracy} onChange={(e) => setManagerEditReviewAccuracy(e.target.value)} placeholder="ТЗ" />
+                                    <FormInput value={managerEditReviewSpeed} onChange={(e) => setManagerEditReviewSpeed(e.target.value)} placeholder="Сроки" />
+                                    <FormInput value={managerEditReviewAesthetics} onChange={(e) => setManagerEditReviewAesthetics(e.target.value)} placeholder="Эстетика" />
+                                  </div>
+
+                                  {managerExecutorMessage ? (
+                                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/80">
+                                      {managerExecutorMessage}
+                                    </div>
+                                  ) : null}
+
+                                  <button
+                                    onClick={() => void handleManagerSaveExecutor()}
+                                    disabled={isSavingManagerExecutor}
+                                    className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                                  >
+                                    {isSavingManagerExecutor ? "Сохраняю..." : "Сохранить карточку"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                            {approvedExecutors.map((profile, index) => (
+                              <div key={`${profile.telegramId}-${index}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
+                                      Место #{index + 1}
+                                    </div>
+                                    <div className="text-base font-semibold text-white">
+                                      {profile.fullName || "Без имени"}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-xs text-[#56FFEF]">
+                                      {typeof profile.rating === "number" ? `${profile.rating} pts` : "—"}
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setEditingRegistryTelegramId(Number(profile.telegramId));
+                                        fillManagerExecutorForm(profile);
+                                        setManagerExecutorMessage("");
+                                        setIsManagerEditingRegistryExecutor(true);
+                                      }}
+                                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/80"
+                                    >
+                                      Редактировать
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID исполнителя</div>
+                                    <div>{profile.executorCode || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div>
+                                    <div className="break-words">{profile.telegramContact || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
+                                    <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заказов</div>
+                                    <div>{profile.completedOrders || 0}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+                                    <div className="break-words">{profile.portfolio || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ выплаты</div>
+                                    <div>{profile.paymentMethod || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
+                                    <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
+                                    <div>{profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные часы</div>
+                                    <div className="whitespace-pre-wrap break-words">{profile.unavailableTime || "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка ТЗ</div>
+                                    <div>{profile.reviewAccuracy ?? "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка сроков</div>
+                                    <div>{profile.reviewSpeed ?? "—"}</div>
+                                  </div>
+                                  <div className="rounded-2xl bg-black/20 p-3">
+                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка эстетики</div>
+                                    <div>{profile.reviewAesthetics ?? "—"}</div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 space-y-2 text-sm text-white/55">
+                                  <div>Подтвердил: {profile.approvedBy || "—"}</div>
+                                  <div className="break-words">Договор: {getPaymentDetailsText(profile.contractData as any) || "—"}</div>
+                                  <div>Счетов на оплату: {profile.paymentInvoices?.length || 0}</div>
+                                  {profile.paymentInvoices?.length ? (
+                                    <div className="space-y-1">
+                                      {profile.paymentInvoices.slice(-3).map((invoice, invoiceIndex) => (
+                                        <div key={`invoice-preview-${profile.telegramId}-${invoiceIndex}`} className="break-words text-white/45">
+                                          • {invoice.value || "—"} {invoice.createdAt ? `(${formatDateLabel(invoice.createdAt)})` : ""}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                ) : activeBottomTab === "create" ? (
+                  <div className="space-y-3">
+                    <FormInput value={createTitle} onChange={(e) => setCreateTitle(e.target.value)} placeholder="Название задачи" />
+                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-3 text-sm text-white/55">Категории</div><div className="flex flex-wrap gap-2">{SPECIALIZATION_OPTIONS.map((item) => { const active = createCategories.includes(item); return <button type="button" key={item} onClick={() => toggleCategory(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>{item}</button>; })}</div></div>
+                    <FormInput type="date" value={createDeadlineDate} onChange={(e) => setCreateDeadlineDate(e.target.value)} placeholder="Дата дедлайна" />
+                    <FormInput type="time" value={createDeadlineTime} onChange={(e) => setCreateDeadlineTime(e.target.value)} placeholder="Время дедлайна" />
+                    <FormInput value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} placeholder="Стоимость" />
+                    <FormInput value={createManagerContact} onChange={(e) => setCreateManagerContact(e.target.value)} placeholder="Контакт менеджера" />
+                    <FormInput value={createSources} onChange={(e) => setCreateSources(e.target.value)} placeholder="Источники (необязательно)" />
+                    <FormInput value={createRefs} onChange={(e) => setCreateRefs(e.target.value)} placeholder="Референсы (необязательно)" />
+                    <FormInput value={createDeliveryTarget} onChange={(e) => setCreateDeliveryTarget(e.target.value)} placeholder="Куда отгружать результат (необязательно)" />
+                    <FormInput value={createComment} onChange={(e) => setCreateComment(e.target.value)} placeholder="Комментарий (необязательно)" />
+                    {createError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{createError}</div> : null}
+                    {createSuccess ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{createSuccess}</div> : null}
+                    <button onClick={handleCreateTask} disabled={isCreating} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">{isCreating ? "Создаю..." : "Создать задачу"}</button>
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
+                )}
+              </div>
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; const badgeCount = tab.key === "executors" ? managerExecutorsBadge : tab.key === "tasks" ? managerTasksBadge : 0; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><BottomBadge count={badgeCount} /><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+
+        {fixesTaskId ? (
+          <div className="fixed inset-0 z-[65] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
+              <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
+              {fixesError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{fixesError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitFixes()} disabled={fixesLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{fixesLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {stageTaskId && stageKey ? (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 text-xl font-semibold text-white">
+                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
+              </div>
+              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
+              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
+                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+      </div>
+    </div>
+  );
 }
 
-/* -------------------- Bootstrap -------------------- */
-
-async function bootstrap() {
-  try {
-    await initDb();
-    await loadAllDataFromDb();
-
-    const server = http.createServer((req, res) => {
-      console.log(`Incoming request: ${req.method} ${req.url}`);
-
-      if (req.method === "OPTIONS") {
-        res.writeHead(204, {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type"
-        });
-        res.end();
-        return;
-      }
-
-      if (req.method === "GET" && req.url === "/api/health") {
-        sendJson(res, 200, { ok: true });
-        return;
-      }
-
-            if (req.method === "GET" && req.url === "/api/executors/pending") {
-        try {
-          const list = getPendingExecutors().map(serializeExecutorProfile);
-          sendJson(res, 200, { ok: true, executors: list });
-        } catch (error) {
-          console.error("GET /api/executors/pending error:", error);
-          sendJson(res, 500, { error: "Failed to load pending executors" });
-        }
-        return;
-      }
-
-      if (req.method === "GET" && req.url === "/api/executors/approved") {
-        try {
-          const list = getApprovedExecutors()
-            .sort((a, b) => {
-              const ratingDiff = (b.rating || 0) - (a.rating || 0);
-              if (ratingDiff !== 0) return ratingDiff;
-              return (b.completedOrders || 0) - (a.completedOrders || 0);
-            })
-            .map(serializeExecutorProfile);
-          sendJson(res, 200, { ok: true, executors: list });
-        } catch (error) {
-          console.error("GET /api/executors/approved error:", error);
-          sendJson(res, 500, { error: "Failed to load approved executors" });
-        }
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/executors/moderate") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-            const telegramId = Number(payload.telegramId || 0);
-            const decision = String(payload.decision || "").trim();
-            const profile = executors.get(telegramId);
-
-            if (!telegramId || !profile) {
-              sendJson(res, 404, { error: "Executor not found" });
-              return;
-            }
-
-            if (decision !== "approve" && decision !== "reject") {
-              sendJson(res, 400, { error: "Invalid decision" });
-              return;
-            }
-
-            const managerContact = payload.managerContact ? String(payload.managerContact).trim() : "Менеджер";
-            const managerTelegramId = Number(payload.managerTelegramId || 0) || null;
-
-            if (decision === "reject") {
-              profile.status = "Отклонён";
-              profile.approvedBy = managerContact;
-              profile.approvedByManagerId = managerTelegramId;
-              profile.updatedAt = new Date().toISOString();
-              await saveExecutorToDb(profile);
-              executors.set(profile.telegramId, profile);
-              sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
-              return;
-            }
-
-            const verifiedSpecializations = Array.isArray(payload.verifiedSpecializations)
-              ? payload.verifiedSpecializations.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const reviewAccuracy = Number(payload.reviewAccuracy);
-            const reviewSpeed = Number(payload.reviewSpeed);
-            const reviewAesthetics = Number(payload.reviewAesthetics);
-
-            if (!verifiedSpecializations.length) {
-              sendJson(res, 400, { error: "verifiedSpecializations is required" });
-              return;
-            }
-
-            if (![reviewAccuracy, reviewSpeed, reviewAesthetics].every(v => Number.isInteger(v) && v >= 1 && v <= 5)) {
-              sendJson(res, 400, { error: "Invalid review scores" });
-              return;
-            }
-
-            const baseRating = calculateBaseRating(reviewAccuracy, reviewSpeed, reviewAesthetics);
-            const newcomerBoost = 0;
-            const finalRating = baseRating + newcomerBoost;
-
-            profile.status = "Подтверждён";
-            profile.approvedBy = managerContact;
-            profile.approvedByManagerId = managerTelegramId;
-            profile.verifiedSpecializations = verifiedSpecializations;
-            profile.reviewAccuracy = reviewAccuracy;
-            profile.reviewSpeed = reviewSpeed;
-            profile.reviewAesthetics = reviewAesthetics;
-            profile.baseRating = baseRating;
-            profile.newcomerBoost = newcomerBoost;
-            profile.rating = finalRating;
-            profile.completedOrders = profile.completedOrders || 0;
-            profile.updatedAt = new Date().toISOString();
-
-            await saveExecutorToDb(profile);
-            executors.set(profile.telegramId, profile);
-
-            sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
-          } catch (error) {
-            console.error("POST /api/executors/moderate error:", error);
-            sendJson(res, 500, { error: "Failed to moderate executor" });
-          }
-        });
-
-        return;
-      }
-
-      if (req.method === "GET" && req.url === "/api/tasks") {
-        try {
-          const groupedTasks = getMiniappTasksGrouped();
-          sendJson(res, 200, groupedTasks);
-        } catch (error) {
-          console.error("GET /api/tasks error:", error);
-          sendJson(res, 500, { error: "Failed to load tasks" });
-        }
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/executors/me") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-            const telegramId = Number(payload.telegramId || 0);
-
-            if (!telegramId) {
-              sendJson(res, 400, { error: "telegramId is required" });
-              return;
-            }
-
-            const profile = executors.get(telegramId);
-
-            if (!profile) {
-              sendJson(res, 404, { error: "Executor not found" });
-              return;
-            }
-
-            await ensureExecutorCodeForProfile(profile);
-
-            sendJson(res, 200, { ok: true, executor: profile });
-          } catch (error) {
-            console.error("POST /api/executors/me error:", error);
-            sendJson(res, 500, { error: "Failed to load executor" });
-          }
-        });
-
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/executors/login-by-code") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-            const executorCode = String(payload.executorCode || "").trim().toUpperCase();
-
-            if (!executorCode) {
-              sendJson(res, 400, { error: "executorCode is required" });
-              return;
-            }
-
-            const profile = Array.from(executors.values()).find(
-              item => String(item.executorCode || "").toUpperCase() === executorCode
-            );
-
-            if (!profile) {
-              sendJson(res, 404, { error: "Executor not found" });
-              return;
-            }
-
-            const newTelegramId = Number(payload.telegramId || 0) || null;
-            const newUsername = payload.username ? String(payload.username) : null;
-            const newTelegramContact = payload.telegramContact ? String(payload.telegramContact).trim() : null;
-            const oldTelegramId = profile.telegramId;
-
-            if (newTelegramId && oldTelegramId !== newTelegramId) {
-              await runQuery(`DELETE FROM executors WHERE telegram_id = $1`, [oldTelegramId]);
-              executors.delete(oldTelegramId);
-              profile.telegramId = newTelegramId;
-            }
-
-            if (newUsername !== null) {
-              profile.username = newUsername;
-            }
-
-            if (newTelegramContact) {
-              profile.telegramContact = newTelegramContact;
-            }
-
-            profile.updatedAt = new Date().toISOString();
-
-            if (profile.telegramId) {
-              await saveExecutorToDb(profile);
-              executors.set(profile.telegramId, profile);
-            }
-
-            sendJson(res, 200, { ok: true, executor: profile });
-          } catch (error) {
-            console.error("POST /api/executors/login-by-code error:", error);
-            sendJson(res, 500, { error: "Failed to login executor" });
-          }
-        });
-
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/executors/register") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-
-            const telegramId = Number(payload.telegramId || 0) || null;
-            const username = payload.username ? String(payload.username) : null;
-            const telegramContact = String(payload.telegramContact || "").trim();
-            const fullName = String(payload.fullName || "").trim();
-            const specializations = Array.isArray(payload.specializations)
-              ? payload.specializations.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const portfolio = payload.portfolio ? String(payload.portfolio) : null;
-            const paymentMethod = String(payload.paymentMethod || "").trim();
-            const paymentDetailsValue = String(payload.paymentDetails || "").trim();
-            const unavailableDays = Array.isArray(payload.unavailableDays)
-              ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const unavailableTime = payload.unavailableTime ? String(payload.unavailableTime) : "";
-
-            if (!telegramContact) {
-              sendJson(res, 400, { error: "telegramContact is required" });
-              return;
-            }
-
-            if (!fullName) {
-              sendJson(res, 400, { error: "fullName is required" });
-              return;
-            }
-
-            if (!specializations.length) {
-              sendJson(res, 400, { error: "At least one specialization is required" });
-              return;
-            }
-
-            if (!paymentMethod) {
-              sendJson(res, 400, { error: "paymentMethod is required" });
-              return;
-            }
-
-            if (!paymentDetailsValue) {
-              sendJson(res, 400, { error: "paymentDetails is required" });
-              return;
-            }
-
-            let executorCode = generateExecutorCode();
-            while (Array.from(executors.values()).some(item => item.executorCode === executorCode)) {
-              executorCode = generateExecutorCode();
-            }
-
-            const profile = {
-              telegramId,
-              executorCode,
-              username,
-              telegramContact,
-              fullName,
-              specializations,
-              verifiedSpecializations: [],
-              portfolio,
-              paymentMethod,
-              paymentDetails: { type: "text", value: paymentDetailsValue },
-              paymentFile: null,
-              unavailableDays,
-              unavailableTime,
-              status: "На модерации",
-              approvedBy: null,
-              approvedByManagerId: null,
-              reviewAccuracy: null,
-              reviewSpeed: null,
-              reviewAesthetics: null,
-              baseRating: null,
-              newcomerBoost: null,
-              rating: null,
-              completedOrders: 0,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              responseHistory: []
-            };
-
-            await saveExecutorToDb(profile);
-
-            if (telegramId) {
-              executors.set(telegramId, profile);
-            }
-
-            notifyManagersAboutExecutor(profile);
-
-            sendJson(res, 200, { ok: true, executor: profile });
-          } catch (error) {
-            console.error("POST /api/executors/register error:", error);
-            sendJson(res, 500, { error: "Failed to register executor" });
-          }
-        });
-
-        return;
-      }
-
-
-      if (req.method === "POST" && req.url === "/api/executors/manager-update") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-            const telegramId = Number(payload.telegramId || 0);
-            const profile = executors.get(telegramId);
-
-            if (!telegramId || !profile) {
-              sendJson(res, 404, { error: "Executor not found" });
-              return;
-            }
-
-            const fullName = String(payload.fullName || "").trim();
-            const telegramContact = String(payload.telegramContact || "").trim();
-            const specializations = Array.isArray(payload.specializations)
-              ? payload.specializations.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const verifiedSpecializations = Array.isArray(payload.verifiedSpecializations)
-              ? payload.verifiedSpecializations.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            const reviewAccuracy = Number(payload.reviewAccuracy);
-            const reviewSpeed = Number(payload.reviewSpeed);
-            const reviewAesthetics = Number(payload.reviewAesthetics);
-
-            if (!fullName || !telegramContact) {
-              sendJson(res, 400, { error: "fullName and telegramContact are required" });
-              return;
-            }
-
-            if (!specializations.length || !verifiedSpecializations.length) {
-              sendJson(res, 400, { error: "specializations are required" });
-              return;
-            }
-
-            if (![reviewAccuracy, reviewSpeed, reviewAesthetics].every(v => Number.isInteger(v) && v >= 1 && v <= 5)) {
-              sendJson(res, 400, { error: "Invalid review scores" });
-              return;
-            }
-
-            profile.fullName = fullName;
-            profile.telegramContact = telegramContact;
-            profile.specializations = specializations;
-            profile.verifiedSpecializations = verifiedSpecializations;
-            profile.portfolio = payload.portfolio ? String(payload.portfolio).trim() : null;
-            profile.paymentMethod = payload.paymentMethod ? String(payload.paymentMethod).trim() : null;
-            profile.paymentDetails = payload.paymentDetails
-              ? { type: "text", value: String(payload.paymentDetails).trim() }
-              : null;
-            profile.contractData = payload.contractData
-              ? { type: "text", value: String(payload.contractData).trim() }
-              : null;
-            profile.paymentInvoices = Array.isArray(payload.paymentInvoices)
-              ? payload.paymentInvoices
-                  .map(item => ({
-                    value: String(item?.value || '').trim(),
-                    createdAt: item?.createdAt ? String(item.createdAt) : new Date().toISOString()
-                  }))
-                  .filter(item => item.value)
-              : [];
-            profile.unavailableDays = Array.isArray(payload.unavailableDays)
-              ? payload.unavailableDays.map(item => String(item).trim()).filter(Boolean)
-              : [];
-            profile.unavailableTime = payload.unavailableTime ? String(payload.unavailableTime).trim() : "";
-            profile.reviewAccuracy = reviewAccuracy;
-            profile.reviewSpeed = reviewSpeed;
-            profile.reviewAesthetics = reviewAesthetics;
-            profile.baseRating = calculateBaseRating(reviewAccuracy, reviewSpeed, reviewAesthetics);
-            profile.newcomerBoost = profile.completedOrders < 2 ? 0 : 0;
-            profile.rating = profile.baseRating;
-            if (payload.managerContact) {
-              profile.approvedBy = String(payload.managerContact).trim();
-            }
-            profile.updatedAt = new Date().toISOString();
-
-            await saveExecutorToDb(profile);
-            executors.set(profile.telegramId, profile);
-
-            sendJson(res, 200, { ok: true, executor: serializeExecutorProfile(profile) });
-          } catch (error) {
-            console.error("POST /api/executors/manager-update error:", error);
-            sendJson(res, 500, { error: "Failed to update executor" });
-          }
-        });
-
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/api/tasks") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-
-            const title = String(payload.title || "").trim();
-const categories = Array.isArray(payload.categories)
-  ? payload.categories.map(item => String(item).trim()).filter(Boolean)
-  : [];
-const deadlineDate = String(payload.deadlineDate || "").trim();
-const deadlineTime = String(payload.deadlineTime || "").trim();
-const price = String(payload.price || "").trim();
-const managerContact = String(payload.managerContact || "").trim();
-const managerId = Number(payload.managerId || 0) || 0;
-const managerUsername = payload.managerUsername ? String(payload.managerUsername) : null;
-const sources = payload.sources ? String(payload.sources) : null;
-const refsData = payload.refs_data ? String(payload.refs_data) : null;
-const deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget) : null;
-const comment = payload.comment ? String(payload.comment) : null;
-
-            if (!title) {
-              sendJson(res, 400, { error: "Title is required" });
-              return;
-            }
-
-            if (!categories.length) {
-              sendJson(res, 400, { error: "At least one category is required" });
-              return;
-            }
-
-            if (!deadlineDate) {
-              sendJson(res, 400, { error: "Deadline date is required" });
-              return;
-            }
-
-            if (!deadlineTime) {
-              sendJson(res, 400, { error: "Deadline time is required" });
-              return;
-            }
-
-            if (!price) {
-              sendJson(res, 400, { error: "Price is required" });
-              return;
-            }
-
-            if (!managerContact) {
-              sendJson(res, 400, { error: "Manager contact is required" });
-              return;
-            }
-
-            const newTask = {
-              id: null,
-              createdAt: new Date().toISOString(),
-              managerId,
-              managerUsername,
-              managerContact,
-              title,
-              categories,
-              deadlineDate,
-              deadlineTime,
-              deadline: `${deadlineDate} ${deadlineTime}`,
-              price,
-              brief: null,
-sources: sources
-  ? { type: "text", value: sources }
-  : null,
-refs_data: refsData
-  ? { type: "text", value: refsData }
-  : null,
-comment,
-              status: "Ждёт исполнителя",
-              responses: [],
-              publishedAt: new Date().toISOString(),
-              assignedExecutorId: null,
-              assignedExecutorName: null,
-              assignedExecutorContact: null,
-              stageMaterials: {
-                thirty: null,
-                sixty: null,
-                final: null,
-                fixesNote: null,
-                fixesHistory: [],
-                thirtyHistory: [],
-                sixtyHistory: [],
-                finalHistory: []
-              },
-              timeline: {
-                assignedAt: null,
-                briefReadAt: null,
-                inWorkAt: null,
-                shown30At: null,
-                shown60At: null,
-                submittedAt: null,
-                approvedAt: null,
-                returnedForFixesAt: null,
-                unpaidAt: null,
-                paidAt: null
-              }
-            };
-
-            await saveTaskToDb(newTask);
-            tasks.push(newTask);
-
-            sendJson(res, 201, {
-              ok: true,
-              task: mapTaskForMiniapp(newTask)
-            });
-          } catch (error) {
-            console.error("POST /api/tasks error:", error);
-            sendJson(res, 500, { error: "Failed to create task" });
-          }
-        });
-
-        return;
-      }
-
-    if (req.method === "GET" && req.url.startsWith("/api/tasks/manager")) {
-      const url = new URL(req.url, "http://localhost");
-      const managerContact = String(url.searchParams.get("managerContact") || "").trim();
-      const filtered = tasks.filter((task) => !managerContact || task.managerContact === managerContact).map((task) => ({
-        ...mapTaskForMiniapp(task),
-        responsesCount: (task.responses || []).length,
-        responses: (task.responses || []).map((r) => ({ executorId: r.executorId, executorName: r.executorName, executorContact: r.executorContact, decision: r.decision }))
-      }));
-      return sendJson(res, 200, { tasks: filtered });
-    }
-
-    if (req.method === "GET" && req.url.startsWith("/api/tasks/executor")) {
-      const url = new URL(req.url, "http://localhost");
-      const telegramId = Number(url.searchParams.get("telegramId") || 0);
-      const profile = executors.get(telegramId);
-      if (!profile) return sendJson(res, 200, { available: [], active: [], archived: [] });
-      const executorSpecializations = (Array.isArray(profile.verifiedSpecializations) ? profile.verifiedSpecializations : []) || [];
-
-      const available = tasks
-        .filter((task) =>
-          ["Ждёт исполнителя", "Есть отклики", "Создана"].includes(task.status) &&
-          Array.isArray(task.categories) &&
-          task.categories.length > 0 &&
-          task.categories.every((spec) => executorSpecializations.includes(spec))
-        )
-        .map((task) => {
-          const response = (task.responses || []).find((item) => item.executorId === telegramId);
-          return { ...mapTaskForMiniapp(task), myDecision: response?.decision || null };
-        });
-      const active = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Назначена", "ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты", "Не оплачена", "Выполнена"].includes(task.status)).map(mapTaskForMiniapp);
-      const archived = tasks.filter((task) => task.assignedExecutorId === telegramId && ["Оплачена"].includes(task.status)).map(mapTaskForMiniapp);
-      return sendJson(res, 200, { available, active, archived });
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/respond") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const taskId = Number(payload.taskId || 0);
-          const telegramId = Number(payload.telegramId || 0);
-          const decision = payload.decision === "accept" ? "Принял" : "Отклонил";
-          const task = tasks.find((item) => item.id === taskId);
-          const executor = executors.get(telegramId);
-          if (!task || !executor) return sendJson(res, 404, { error: "Task or executor not found" });
-          if (!(task.responses || []).find((r) => r.executorId === telegramId)) {
-            const response = {
-              executorId: telegramId,
-              executorName: executor.fullName || executor.username || "Без имени",
-              executorContact: getExecutorContactFromProfile(executor),
-              decision,
-              createdAt: new Date().toISOString()
-            };
-            task.responses.push(response);
-            executor.responseHistory = executor.responseHistory || [];
-            executor.responseHistory.push({ taskId: task.id, taskTitle: task.title, decision, createdAt: new Date().toISOString() });
-            if (decision === "Принял" && task.status === "Ждёт исполнителя") task.status = "Есть отклики";
-            await saveExecutorToDb(executor);
-            executors.set(executor.telegramId, executor);
-            await saveTaskToDb(task);
-          }
-          if (decision === "Принял") {
-            const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
-            if (managerChatId) {
-              sendMessage(
-                managerChatId,
-                `Новый отклик на задачу #${task.id}.
-
-${response.executorName}
-${response.executorContact}`,
-                getMainKeyboard(true)
-              );
-            }
-          }
-          sendJson(res, 200, { ok: true });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to save response" });
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/assign") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          const executor = executors.get(Number(payload.executorId || 0));
-          if (!task || !executor) return sendJson(res, 404, { error: "Task or executor not found" });
-          task.assignedExecutorId = executor.telegramId;
-          task.assignedExecutorName = executor.fullName;
-          task.assignedExecutorContact = getExecutorContactFromProfile(executor);
-          task.status = "Назначена";
-          task.timeline.assignedAt = new Date().toISOString();
-          await saveTaskToDb(task);
-
-          if (executor.telegramId) {
-            sendMessage(
-              executor.telegramId,
-              `Ты назначен на задачу #${task.id}.
-
-${task.title}`,
-              getExecutorTaskActionKeyboard(task)
-            );
-            notifyTaskMaterials(executor.telegramId, task);
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to assign task" });
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/executor-action") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          const telegramId = Number(payload.telegramId || 0);
-          const action = String(payload.action || "");
-          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
-          if (action === "Изучил ТЗ" && task.status === "Назначена") {
-            task.status = "ТЗ изучено";
-            task.timeline.briefReadAt = new Date().toISOString();
-          } else if (action === "Взял в работу" && task.status === "ТЗ изучено") {
-            task.status = "В работе";
-            task.timeline.inWorkAt = new Date().toISOString();
-          } else {
-            return sendJson(res, 400, { error: "Invalid action" });
-          }
-          await saveTaskToDb(task);
-
-          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
-          if (managerChatId) {
-            sendMessage(
-              managerChatId,
-              `Обновление по задаче #${task.id}: исполнитель отметил этап «${action}».`,
-              getMainKeyboard(true)
-            );
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to update task" });
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/stage-submit") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          const telegramId = Number(payload.telegramId || 0);
-          const stageKey = String(payload.stageKey || "");
-          const value = String(payload.value || "").trim();
-          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
-          const field = { type: "text", value, createdAt: new Date().toISOString() };
-          task.stageMaterials = task.stageMaterials || {};
-          if (!Array.isArray(task.stageMaterials.thirtyHistory)) task.stageMaterials.thirtyHistory = [];
-          if (!Array.isArray(task.stageMaterials.sixtyHistory)) task.stageMaterials.sixtyHistory = [];
-          if (!Array.isArray(task.stageMaterials.finalHistory)) task.stageMaterials.finalHistory = [];
-
-          if (stageKey === "30" && task.status === "В работе") {
-            task.stageMaterials.thirty = field;
-            task.stageMaterials.thirtyHistory.push(field);
-            task.status = "30%";
-            task.timeline.shown30At = new Date().toISOString();
-          } else if (stageKey === "60" && task.status === "30%") {
-            task.stageMaterials.sixty = field;
-            task.stageMaterials.sixtyHistory.push(field);
-            task.status = "60%";
-            task.timeline.shown60At = new Date().toISOString();
-          } else if (stageKey === "final" && ["60%", "Правки"].includes(task.status)) {
-            task.stageMaterials.final = field;
-            task.stageMaterials.finalHistory.push(field);
-            task.status = "На проверке";
-            task.timeline.submittedAt = new Date().toISOString();
-          } else {
-            return sendJson(res, 400, { error: "Invalid stage action" });
-          }
-          await saveTaskToDb(task);
-
-          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
-          if (managerChatId) {
-            const stageLabel = stageKey === "30" ? "30%" : stageKey === "60" ? "60%" : "финал";
-            sendMessage(
-              managerChatId,
-              `Исполнитель загрузил этап ${stageLabel} по задаче #${task.id}.`,
-              getMainKeyboard(true)
-            );
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to submit stage material" });
-        }
-      });
-      return;
-    }
-
-
-    if (req.method === "POST" && req.url === "/api/tasks/invoice-submit") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          const telegramId = Number(payload.telegramId || 0);
-          const value = String(payload.value || "").trim();
-          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
-          if (task.status !== "Ожидает счёт") return sendJson(res, 400, { error: "Invoice is not expected" });
-          task.stageMaterials = task.stageMaterials || {};
-          task.stageMaterials.invoice = { type: "text", value, createdAt: new Date().toISOString() };
-          task.status = "Счёт загружен";
-          task.timeline.invoiceSubmittedAt = new Date().toISOString();
-          await saveTaskToDb(task);
-
-          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
-          if (managerChatId) {
-            sendMessage(
-              managerChatId,
-              `Исполнитель загрузил счёт по задаче #${task.id}.`,
-              getMainKeyboard(true)
-            );
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to submit invoice" });
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/confirm-payment") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          const telegramId = Number(payload.telegramId || 0);
-          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
-          if (task.status !== "Ожидает подтверждения оплаты") return sendJson(res, 400, { error: "Payment confirmation is not expected" });
-          task.status = "Оплачена";
-          task.timeline.paymentConfirmedAt = new Date().toISOString();
-          await saveTaskToDb(task);
-
-          const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
-          if (managerChatId) {
-            sendMessage(
-              managerChatId,
-              `Исполнитель подтвердил оплату по задаче #${task.id}. Задача завершена.`,
-              getMainKeyboard(true)
-            );
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to confirm payment" });
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/api/tasks/manager-stage-action") {
-      let body = "";
-      req.on("data", (chunk) => body += chunk.toString());
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          if (!task) return sendJson(res, 404, { error: "Task not found" });
-          if (payload.action === "approve") {
-            const executor = executors.get(task.assignedExecutorId);
-            task.timeline.approvedAt = new Date().toISOString();
-            if (executor && ["ИП", "Самозанятость"].includes(String(executor.paymentMethod || ""))) {
-              task.status = "Ожидает счёт";
-              task.stageMaterials = task.stageMaterials || {};
-              task.stageMaterials.paymentMeta = { required: true, method: executor.paymentMethod };
-            } else {
-              task.status = "Выполнена";
-              task.timeline.unpaidAt = new Date().toISOString();
-            }
-            if (executor) {
-              executor.completedOrders = (executor.completedOrders || 0) + 1;
-              await saveExecutorToDb(executor);
-              executors.set(executor.telegramId, executor);
-            }
-          } else if (payload.action === "fixes") {
-            task.status = "Правки";
-            task.stageMaterials = task.stageMaterials || {};
-            if (!Array.isArray(task.stageMaterials.fixesHistory)) task.stageMaterials.fixesHistory = [];
-            task.stageMaterials.fixesNote = { value: String(payload.note || "").trim(), createdAt: new Date().toISOString() };
-            task.stageMaterials.fixesHistory.push(task.stageMaterials.fixesNote);
-            task.timeline.returnedForFixesAt = new Date().toISOString();
-            task.timeline.revisionCount = Number(task.timeline.revisionCount || 0) + 1;
-            const executor = executors.get(task.assignedExecutorId);
-            if (executor && typeof executor.rating === "number") {
-              executor.rating = Math.max(0, Math.round(executor.rating * 0.9));
-              await saveExecutorToDb(executor);
-              executors.set(executor.telegramId, executor);
-            }
-          } else if (payload.action === "unpaid") {
-            task.status = "Не оплачена";
-            task.timeline.unpaidAt = new Date().toISOString();
-          } else if (payload.action === "paid") {
-            if (task.stageMaterials?.paymentMeta?.required) {
-              task.status = "Ожидает подтверждения оплаты";
-            } else {
-              task.status = "Оплачена";
-            }
-            task.timeline.paidAt = new Date().toISOString();
-          } else {
-            return sendJson(res, 400, { error: "Unknown action" });
-          }
-          await saveTaskToDb(task);
-
-          const executorChatId = task.assignedExecutorId || null;
-          if (executorChatId) {
-            if (payload.action === "approve") {
-              if (task.status === "Ожидает счёт") {
-                sendMessage(
-                  executorChatId,
-                  `Задача #${task.id} принята. Теперь нужно загрузить счёт на оплату.`,
-                  getMainKeyboard(false, true)
-                );
-              } else {
-                sendMessage(
-                  executorChatId,
-                  `Задача #${task.id} принята менеджером.`,
-                  getMainKeyboard(false, true)
-                );
-              }
-            } else if (payload.action === "fixes") {
-              sendMessage(
-                executorChatId,
-                `Задача #${task.id} отправлена на правки.
-
-${String(payload.note || "").trim() || "Открой задачу, чтобы посмотреть замечания."}`,
-                getMainKeyboard(false, true)
-              );
-            } else if (payload.action === "paid") {
-              if (task.status === "Ожидает подтверждения оплаты") {
-                sendMessage(
-                  executorChatId,
-                  `По задаче #${task.id} менеджер отметил оплату. Подтверди получение оплаты в приложении.`,
-                  getMainKeyboard(false, true)
-                );
-              } else {
-                sendMessage(
-                  executorChatId,
-                  `По задаче #${task.id} счёт оплачен.`,
-                  getMainKeyboard(false, true)
-                );
-              }
-            }
-          }
-
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to update manager stage action" });
-        }
-      });
-      return;
-    }
-
-      if (req.method === "GET" && req.url === "/") {
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end("Creative Conveyor is running");
-        return;
-      }
-
-      if (req.method === "GET" && req.url === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ status: "ok" }));
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/webhook") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          console.log("Webhook update:", body);
-
-          try {
-            const update = JSON.parse(body);
-
-            if (update.callback_query) {
-              await handleCallbackQuery(update.callback_query);
-            } else if (update.message) {
-              const message = update.message;
-              const chatId = message?.chat?.id;
-              const text = message?.text || null;
-              const from = message?.from || null;
-
-              if (chatId && message) {
-                await handleTextMessage(chatId, text, from, message);
-              }
-            }
-          } catch (error) {
-            console.error("Parse error:", error);
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ ok: true }));
-        });
-
-        return;
-      }
-
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found");
-    });
-
-    server.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error("Bootstrap error:", error);
-    process.exit(1);
+function looksLikeUrl(value?: string | null) {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return /^(https?:\/\/|www\.|t\.me\/|telegram\.me\/)/i.test(trimmed);
+}
+
+function normalizeUrl(value?: string | null) {
+  if (!value) return "#";
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function RenderTextOrLink({ value }: { value?: string | null }) {
+  if (!value) return <span className="whitespace-pre-wrap break-words">—</span>;
+  if (looksLikeUrl(value)) {
+    const href = normalizeUrl(value);
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className="break-all text-[#56FFEF] underline underline-offset-4">
+        {value}
+      </a>
+    );
   }
+  return <span className="whitespace-pre-wrap break-words">{value}</span>;
 }
 
-bootstrap();
+function HistoryList({
+  title,
+  items
+}: {
+  title: string;
+  items?: Array<{ value?: string; createdAt?: string }> | null;
+}) {
+  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
+  return (
+    <div className="rounded-2xl bg-black/20 p-3">
+      <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">{title}</div>
+      {!normalized.length ? (
+        <div className="text-white/45">—</div>
+      ) : (
+        <div className="space-y-3">
+          {normalized.map((item, index) => (
+            <div key={`${title}-${index}`} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+              <div className="mb-1 text-xs text-white/35">{formatDateLabel(item.createdAt)}</div>
+              <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
