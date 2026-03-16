@@ -3033,9 +3033,42 @@ async function bootstrap() {
             const oldTelegramId = profile.telegramId;
 
             if (newTelegramId && oldTelegramId !== newTelegramId) {
+              await runQuery(`
+                UPDATE tasks
+                SET
+                  assigned_executor_id = $1,
+                  updated_at = NOW()
+                WHERE assigned_executor_id = $2
+              `, [newTelegramId, oldTelegramId]);
+
+              await runQuery(`
+                UPDATE task_responses
+                SET
+                  executor_id = $1
+                WHERE executor_id = $2
+              `, [newTelegramId, oldTelegramId]);
+
               await runQuery(`DELETE FROM executors WHERE telegram_id = $1`, [oldTelegramId]);
               executors.delete(oldTelegramId);
               profile.telegramId = newTelegramId;
+
+              for (const task of tasks) {
+                if (task.assignedExecutorId === oldTelegramId) {
+                  task.assignedExecutorId = newTelegramId;
+                }
+
+                if (Array.isArray(task.responses)) {
+                  task.responses = task.responses.map((item) => {
+                    if (item.executorId === oldTelegramId) {
+                      return {
+                        ...item,
+                        executorId: newTelegramId
+                      };
+                    }
+                    return item;
+                  });
+                }
+              }
             }
 
             if (newUsername !== null) {
