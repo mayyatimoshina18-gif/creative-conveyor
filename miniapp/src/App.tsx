@@ -12,11 +12,7 @@ import {
   Clock3,
   Archive,
   CircleDot,
-  Pencil,
-  X,
-  CheckCircle2,
-  Circle,
-  LoaderCircle
+  Pencil
 } from "lucide-react";
 
 type Task = {
@@ -32,15 +28,6 @@ type Task = {
   assignedExecutorContact?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
-  briefText?: string;
-  sourcesText?: string;
-  refsText?: string;
-  comment?: string | null;
-  stageMaterials?: {
-    thirty?: { value?: string; createdAt?: string } | null;
-    sixty?: { value?: string; createdAt?: string } | null;
-    final?: { value?: string; createdAt?: string } | null;
-  };
 };
 
 type TasksResponse = {
@@ -115,31 +102,30 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
   );
 }
 
-function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+function TaskCard({ task }: { task: Task }) {
   return (
-    <motion.button
-      type="button"
+    <motion.div
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -12 }}
       transition={{ duration: 0.18 }}
-      onClick={onOpen}
-      className="w-full rounded-[28px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
+      className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.28)]"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
           <div className="text-base font-semibold leading-5 text-white">{task.title}</div>
         </div>
-        <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
-          {getCurrentStageLabel(task.status)}
-        </div>
+        <button className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">Открыть</button>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
         {(task.type || []).map((item) => (
-          <span key={item} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+          <span
+            key={item}
+            className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]"
+          >
             {item}
           </span>
         ))}
@@ -157,7 +143,7 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
       </div>
 
       <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
-    </motion.button>
+    </motion.div>
   );
 }
 
@@ -329,7 +315,6 @@ export default function App() {
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   useEffect(() => {
     const telegram = (window as any)?.Telegram?.WebApp;
@@ -1366,7 +1351,7 @@ export default function App() {
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
-                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} onOpen={() => setSelectedTask(task)} />)}</AnimatePresence></div>
+                      <div className="space-y-3"><AnimatePresence mode="popLayout">{visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)}</AnimatePresence></div>
                     )}
                   </>
                 ) : activeBottomTab === "executors" ? (
@@ -1859,10 +1844,7 @@ export default function App() {
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
             </motion.div>
           )}
-                </AnimatePresence>
-
-        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
-
+        </AnimatePresence>
       </div>
     </div>
   );
