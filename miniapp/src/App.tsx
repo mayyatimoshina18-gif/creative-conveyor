@@ -334,24 +334,6 @@ function PipelineView({ task, compact = false }: { task: Task; compact?: boolean
           );
         })}
 
-        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
-
-        {stageTaskId && stageKey ? (
-          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
-            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
-              <div className="mb-4 text-xl font-semibold text-white">
-                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
-              </div>
-              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
-              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
-                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
       </div>
     </div>
   );
@@ -393,24 +375,6 @@ function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => 
         <div className="mt-4">
           <PipelineView task={task} />
         </div>
-
-        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
-
-        {stageTaskId && stageKey ? (
-          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
-            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
-              <div className="mb-4 text-xl font-semibold text-white">
-                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
-              </div>
-              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
-              {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
-                <button onClick={() => void submitStageMaterial()} disabled={stageLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">{stageLoading ? "Отправляю..." : "Отправить"}</button>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
       </div>
     </div>
