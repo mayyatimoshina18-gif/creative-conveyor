@@ -715,6 +715,43 @@ function sendMessage(chatId, text, replyMarkup = null) {
 
   sendTelegramRequest("sendMessage", payload);
 }
+const WEB_APP_URL = process.env.WEB_APP_URL || "";
+
+function buildAppUrl(params = {}) {
+  if (!WEB_APP_URL) return "";
+  const url = new URL(WEB_APP_URL);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  return url.toString();
+}
+
+function mergeReplyMarkup(baseMarkup, extraRows) {
+  const inlineKeyboard = [];
+  if (baseMarkup?.inline_keyboard && Array.isArray(baseMarkup.inline_keyboard)) {
+    inlineKeyboard.push(...baseMarkup.inline_keyboard);
+  }
+  if (Array.isArray(extraRows) && extraRows.length) {
+    inlineKeyboard.push(...extraRows);
+  }
+  if (!inlineKeyboard.length) return baseMarkup || null;
+  return { inline_keyboard: inlineKeyboard };
+}
+
+function getOpenTaskButton(task, role, bottomTab, topTab) {
+  const url = buildAppUrl({ role, bottomTab, topTab, taskId: task?.id || "" });
+  if (!url) return null;
+  return [{ text: "Открыть в приложении", url }];
+}
+
+function sendTaskNotification(chatId, text, task, role, bottomTab, topTab, replyMarkup = null) {
+  const extraRows = [];
+  const taskButton = getOpenTaskButton(task, role, bottomTab, topTab);
+  if (taskButton) extraRows.push(taskButton);
+  sendMessage(chatId, text, mergeReplyMarkup(replyMarkup, extraRows));
+}
 
 function sendDocument(chatId, fileId, caption) {
   sendTelegramRequest("sendDocument", {
@@ -3489,11 +3526,15 @@ ${response.executorContact}`,
           await saveTaskToDb(task);
 
           if (executor.telegramId) {
-            sendMessage(
+            sendTaskNotification(
               executor.telegramId,
               `Ты назначен на задачу #${task.id}.
 
 ${task.title}`,
+              task,
+              "executor",
+              "tasks",
+              "active",
               getExecutorTaskActionKeyboard(task)
             );
             notifyTaskMaterials(executor.telegramId, task);
@@ -3531,9 +3572,13 @@ ${task.title}`,
 
           const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
           if (managerChatId) {
-            sendMessage(
+            sendTaskNotification(
               managerChatId,
               `Обновление по задаче #${task.id}: исполнитель отметил этап «${action}».`,
+              task,
+              "manager",
+              "tasks",
+              "active",
               getMainKeyboard(true)
             );
           }
@@ -3587,9 +3632,13 @@ ${task.title}`,
           const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
           if (managerChatId) {
             const stageLabel = stageKey === "30" ? "30%" : stageKey === "60" ? "60%" : "финал";
-            sendMessage(
+            sendTaskNotification(
               managerChatId,
               `Исполнитель загрузил этап ${stageLabel} по задаче #${task.id}.`,
+              task,
+              "manager",
+              "tasks",
+              "active",
               getMainKeyboard(true)
             );
           }
@@ -3623,9 +3672,13 @@ ${task.title}`,
 
           const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
           if (managerChatId) {
-            sendMessage(
+            sendTaskNotification(
               managerChatId,
               `Исполнитель загрузил счёт по задаче #${task.id}.`,
+              task,
+              "manager",
+              "tasks",
+              "active",
               getMainKeyboard(true)
             );
           }
@@ -3655,9 +3708,13 @@ ${task.title}`,
 
           const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
           if (managerChatId) {
-            sendMessage(
+            sendTaskNotification(
               managerChatId,
               `Исполнитель подтвердил оплату по задаче #${task.id}. Задача завершена.`,
+              task,
+              "manager",
+              "tasks",
+              "archived",
               getMainKeyboard(true)
             );
           }
@@ -3749,37 +3806,57 @@ ${task.title}`,
           if (executorChatId) {
             if (payload.action === "approve") {
               if (task.status === "Ожидает счёт") {
-                sendMessage(
+                sendTaskNotification(
                   executorChatId,
                   `Задача #${task.id} принята. Теперь нужно загрузить счёт на оплату.`,
+                  task,
+                  "executor",
+                  "tasks",
+                  "active",
                   getMainKeyboard(false, true)
                 );
               } else {
-                sendMessage(
+                sendTaskNotification(
                   executorChatId,
                   `Задача #${task.id} принята менеджером.`,
+                  task,
+                  "executor",
+                  "tasks",
+                  "active",
                   getMainKeyboard(false, true)
                 );
               }
             } else if (payload.action === "fixes") {
-              sendMessage(
+              sendTaskNotification(
                 executorChatId,
                 `Задача #${task.id} отправлена на правки.
 
 ${String(payload.note || "").trim() || "Открой задачу, чтобы посмотреть замечания."}`,
+                task,
+                "executor",
+                "tasks",
+                "active",
                 getMainKeyboard(false, true)
               );
             } else if (payload.action === "paid") {
               if (task.status === "Ожидает подтверждения оплаты") {
-                sendMessage(
+                sendTaskNotification(
                   executorChatId,
                   `По задаче #${task.id} менеджер отметил оплату. Подтверди получение оплаты в приложении.`,
+                  task,
+                  "executor",
+                  "tasks",
+                  "active",
                   getMainKeyboard(false, true)
                 );
               } else {
-                sendMessage(
+                sendTaskNotification(
                   executorChatId,
                   `По задаче #${task.id} счёт оплачен.`,
+                  task,
+                  "executor",
+                  "tasks",
+                  "archived",
                   getMainKeyboard(false, true)
                 );
               }
