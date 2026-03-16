@@ -28,6 +28,22 @@ type Task = {
   assignedExecutorContact?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
+  responsesCount?: number;
+  myDecision?: string | null;
+  brief?: any;
+  sources?: any;
+  refsData?: any;
+  comment?: string | null;
+  responses?: Array<{
+    executorId: number;
+    executorName: string;
+    executorContact: string;
+    decision: string;
+    createdAt: string;
+    rating?: number | null;
+    verifiedSpecializations?: string[];
+    completedOrders?: number;
+  }>;
 };
 
 type TasksResponse = {
@@ -224,6 +240,14 @@ function formatDateLabel(value?: string) {
   return date.toLocaleDateString("ru-RU");
 }
 
+function formatMaterialField(field: any) {
+  if (!field) return "—";
+  if (typeof field === "string") return field;
+  if (field?.type === "text") return field?.value || "—";
+  if (field?.type === "document") return field?.file_name || field?.caption || "Файл";
+  return "—";
+}
+
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome"
@@ -266,6 +290,12 @@ export default function App() {
   });
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
+  const [managerTasks, setManagerTasks] = useState<Task[]>([]);
+  const [isLoadingManagerTasks, setIsLoadingManagerTasks] = useState(false);
+  const [managerTasksError, setManagerTasksError] = useState("");
+  const [executorAvailableTasks, setExecutorAvailableTasks] = useState<Task[]>([]);
+  const [executorAssignedTasks, setExecutorAssignedTasks] = useState<Task[]>([]);
+  const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
 
   const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
   const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
@@ -432,11 +462,79 @@ export default function App() {
     }
   };
 
+
+  const loadManagerTasks = async () => {
+    try {
+      setIsLoadingManagerTasks(true);
+      setManagerTasksError("");
+      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact || "")}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setManagerTasks(Array.isArray(data.tasks) ? data.tasks : []);
+    } catch (error) {
+      console.error("Failed to load manager tasks:", error);
+      setManagerTasksError("Не удалось загрузить задачи менеджера");
+    } finally {
+      setIsLoadingManagerTasks(false);
+    }
+  };
+
+  const loadExecutorTasks = async (telegramId?: number | null) => {
+    const id = Number(telegramId || executor?.telegramId || 0);
+    if (!id) return;
+    try {
+      setIsLoadingExecutorTasks(true);
+      const response = await fetch(`${API_BASE}/api/tasks/executor?telegramId=${id}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setExecutorAvailableTasks(Array.isArray(data.available) ? data.available : []);
+      setExecutorAssignedTasks(Array.isArray(data.assigned) ? data.assigned : []);
+    } catch (error) {
+      console.error("Failed to load executor tasks:", error);
+    } finally {
+      setIsLoadingExecutorTasks(false);
+    }
+  };
+
+  const handleExecutorTaskDecision = async (taskId: number, decision: "Принял" | "Отклонил") => {
+    try {
+      if (!executor?.telegramId) return;
+      const response = await fetch(`${API_BASE}/api/tasks/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, executorId: executor.telegramId, decision })
+      });
+      if (!response.ok) throw new Error("respond failed");
+      await loadExecutorTasks(executor.telegramId);
+      setExecutorInfo(decision === "Принял" ? "Отклик отправлен" : "Задача скрыта из новых");
+    } catch (error) {
+      console.error("Failed to respond task:", error);
+      setExecutorInfo("Не удалось отправить отклик");
+    }
+  };
+
+  const handleAssignExecutor = async (taskId: number, executorId: number) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/tasks/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, executorId, managerContact: createManagerContact })
+      });
+      if (!response.ok) throw new Error("assign failed");
+      await loadTasks();
+      await loadManagerTasks();
+    } catch (error) {
+      console.error("Failed to assign executor:", error);
+      setManagerTasksError("Не удалось назначить исполнителя");
+    }
+  };
+
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks();
+      void loadManagerTasks();
     }
-  }, [screen, activeBottomTab]);
+  }, [screen, activeBottomTab, createManagerContact]);
 
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "executors") {
@@ -509,6 +607,7 @@ export default function App() {
 
       if (data.executor.status === "Подтверждён") {
         setScreen("executorApp");
+        void loadExecutorTasks(data.executor.telegramId);
         return;
       }
 
@@ -896,6 +995,7 @@ export default function App() {
 
       if (data.executor.status === "Подтверждён") {
         setScreen("executorApp");
+        void loadExecutorTasks(data.executor.telegramId);
         return;
       }
 
@@ -1259,6 +1359,49 @@ export default function App() {
                     <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
                     <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
                     {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+
+                    <div className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-white">Новые задачи</div>
+                          <div className="text-xs text-white/40">Только подходящие по подтверждённым специализациям</div>
+                        </div>
+                        <button onClick={() => void loadExecutorTasks(executor?.telegramId)} className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75">Обновить</button>
+                      </div>
+                      <div className="space-y-3">
+                        {isLoadingExecutorTasks ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/55">Загружаю задачи...</div> : !executorAvailableTasks.length ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/45">Пока нет новых задач.</div> : executorAvailableTasks.map((task) => (
+                          <div key={`avail-${task.id}`} className="rounded-2xl bg-black/20 p-3">
+                            <div className="mb-1 text-sm font-medium text-white">{task.title}</div>
+                            <div className="mb-2 text-xs text-white/45">{(task.type || []).join(", ")} · {task.deadline || "—"} · {task.price || "—"}</div>
+                            <div className="mb-2 text-xs text-white/55">Куда отгружать: {formatMaterialField(task.brief)}</div>
+                            <div className="mb-3 text-xs text-white/55">Комментарий: {task.comment || "—"}</div>
+                            {task.myDecision ? (
+                              <div className="text-xs text-[#56FFEF]">Твой статус: {task.myDecision}</div>
+                            ) : (
+                              <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "Принял")} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Откликнуться</button>
+                                <button onClick={() => void handleExecutorTaskDecision(task.id, "Отклонил")} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">Скрыть</button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-3 text-sm font-medium text-white">Мои задачи</div>
+                      <div className="space-y-3">
+                        {!executorAssignedTasks.length ? <div className="rounded-2xl bg-black/20 p-3 text-sm text-white/45">Назначенных задач пока нет.</div> : executorAssignedTasks.map((task) => (
+                          <div key={`assigned-${task.id}`} className="rounded-2xl bg-black/20 p-3">
+                            <div className="mb-1 text-sm font-medium text-white">{task.title}</div>
+                            <div className="text-xs text-white/45">Статус: {task.status || "—"} · {task.deadline || "—"}</div>
+                            <div className="mt-2 text-xs text-white/55">Источники: {formatMaterialField(task.sources)}</div>
+                            <div className="text-xs text-white/55">Референсы: {formatMaterialField(task.refsData)}</div>
+                            <div className="text-xs text-white/55">Комментарий: {task.comment || "—"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </>
               ) : (
