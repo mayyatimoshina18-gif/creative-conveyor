@@ -3393,8 +3393,15 @@ comment,
       const telegramId = Number(url.searchParams.get("telegramId") || 0);
       const profile = executors.get(telegramId);
       if (!profile) return sendJson(res, 200, { available: [], active: [], archived: [] });
+      const executorSpecializations = (Array.isArray(profile.verifiedSpecializations) && profile.verifiedSpecializations.length
+        ? profile.verifiedSpecializations
+        : profile.specializations) || [];
+
       const available = tasks
-        .filter((task) => ["Ждёт исполнителя", "Есть отклики"].includes(task.status) && profile.verifiedSpecializations?.some((spec) => (task.categories || []).includes(spec)))
+        .filter((task) =>
+          ["Ждёт исполнителя", "Есть отклики", "Создана"].includes(task.status) &&
+          executorSpecializations.some((spec) => (task.categories || []).includes(spec))
+        )
         .map((task) => {
           const response = (task.responses || []).find((item) => item.executorId === telegramId);
           return { ...mapTaskForMiniapp(task), myDecision: response?.decision || null };
