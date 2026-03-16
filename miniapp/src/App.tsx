@@ -577,6 +577,26 @@ export default function App() {
     }
   }, [screen, activeBottomTab]);
 
+
+
+  useEffect(() => {
+    if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
+      void loadExecutorTasks(executor.telegramId);
+    }
+  }, [screen, executorBottomTab, executorTasksTopTab, executor?.telegramId]);
+
+  useEffect(() => {
+    if (!(screen === "executorApp" && executorBottomTab === "tasks" && executorTasksTopTab === "new" && executor?.telegramId)) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadExecutorTasks(executor.telegramId);
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [screen, executorBottomTab, executorTasksTopTab, executor?.telegramId]);
+
   const resetExecutorForm = () => {
     setExecutorFormError("");
     setExecutorInfo("");
