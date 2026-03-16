@@ -1150,7 +1150,11 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function mapTaskForMiniapp(task) {
+function mapTaskForMiniapp(task, executorId = null) {
+  const myResponse = executorId
+    ? (task.responses || []).find(item => Number(item.executorId) === Number(executorId))
+    : null;
+
   return {
     id: task.id,
     title: task.title || "",
@@ -1163,7 +1167,13 @@ function mapTaskForMiniapp(task) {
     assignedExecutorName: task.assignedExecutorName || null,
     assignedExecutorContact: task.assignedExecutorContact || null,
     publishedAt: task.publishedAt || null,
-    createdAt: task.createdAt || null
+    createdAt: task.createdAt || null,
+    responsesCount: (task.responses || []).filter(item => item.decision === "Принял").length,
+    myDecision: myResponse ? myResponse.decision : null,
+    brief: task.brief || null,
+    sources: task.sources || null,
+    refsData: task.refs_data || null,
+    comment: task.comment || null
   };
 }
 
@@ -3368,6 +3378,193 @@ comment,
           } catch (error) {
             console.error("POST /api/tasks error:", error);
             sendJson(res, 500, { error: "Failed to create task" });
+          }
+        });
+
+        return;
+      }
+
+      if (req.method === "GET" && req.url.startsWith("/api/tasks/executor")) {
+        try {
+          const urlObj = new URL(req.url, "http://localhost");
+          const telegramId = Number(urlObj.searchParams.get("telegramId") || 0);
+          const profile = executors.get(telegramId);
+
+          if (!profile) {
+            sendJson(res, 404, { error: "Executor not found" });
+            return;
+          }
+
+          const available = tasks
+            .filter(task => (task.status === "Ждёт исполнителя" || task.status === "Есть отклики") && (profile.verifiedSpecializations || []).some(spec => (task.categories || []).includes(spec)))
+            .map(task => mapTaskForMiniapp(task, telegramId));
+
+          const assigned = tasks
+            .filter(task => Number(task.assignedExecutorId) === telegramId)
+            .map(task => mapTaskForMiniapp(task, telegramId));
+
+          sendJson(res, 200, { ok: true, available, assigned });
+        } catch (error) {
+          console.error("GET /api/tasks/executor error:", error);
+          sendJson(res, 500, { error: "Failed to load executor tasks" });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && req.url.startsWith("/api/tasks/manager")) {
+        try {
+          const urlObj = new URL(req.url, "http://localhost");
+          const managerContact = String(urlObj.searchParams.get("managerContact") || "").trim();
+
+          const managerTasks = tasks
+            .filter(task => !managerContact || String(task.managerContact || "").trim() === managerContact)
+            .map(task => ({
+              ...mapTaskForMiniapp(task),
+              responses: (task.responses || [])
+                .filter(item => item.decision === "Принял")
+                .map(item => {
+                  const executor = executors.get(Number(item.executorId));
+                  return {
+                    executorId: item.executorId,
+                    executorName: item.executorName,
+                    executorContact: item.executorContact,
+                    decision: item.decision,
+                    createdAt: item.createdAt,
+                    rating: executor?.rating ?? null,
+                    verifiedSpecializations: executor?.verifiedSpecializations || [],
+                    completedOrders: executor?.completedOrders || 0
+                  };
+                })
+            }));
+
+          sendJson(res, 200, { ok: true, tasks: managerTasks });
+        } catch (error) {
+          console.error("GET /api/tasks/manager error:", error);
+          sendJson(res, 500, { error: "Failed to load manager tasks" });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/tasks/respond") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const taskId = Number(payload.taskId || 0);
+            const executorId = Number(payload.executorId || 0);
+            const decision = String(payload.decision || "").trim();
+
+            const task = tasks.find(item => Number(item.id) === taskId);
+            const executor = executors.get(executorId);
+
+            if (!task) {
+              sendJson(res, 404, { error: "Task not found" });
+              return;
+            }
+
+            if (!executor || executor.status !== "Подтверждён") {
+              sendJson(res, 403, { error: "Executor not approved" });
+              return;
+            }
+
+            if (!["Принял", "Отклонил"].includes(decision)) {
+              sendJson(res, 400, { error: "Invalid decision" });
+              return;
+            }
+
+            const existingIndex = (task.responses || []).findIndex(item => Number(item.executorId) === executorId);
+            const responsePayload = {
+              executorId,
+              executorName: executor.fullName || executor.username || "Без имени",
+              executorContact: executor.telegramContact || `id: ${executorId}`,
+              decision,
+              createdAt: new Date().toISOString()
+            };
+
+            if (!Array.isArray(task.responses)) task.responses = [];
+            if (existingIndex >= 0) {
+              task.responses[existingIndex] = responsePayload;
+            } else {
+              task.responses.push(responsePayload);
+            }
+
+            executor.responseHistory = Array.isArray(executor.responseHistory) ? executor.responseHistory : [];
+            executor.responseHistory.push({
+              taskId: task.id,
+              taskTitle: task.title,
+              decision,
+              createdAt: new Date().toISOString()
+            });
+
+            if ((task.responses || []).some(item => item.decision === "Принял") && task.status === "Ждёт исполнителя") {
+              task.status = "Есть отклики";
+            }
+
+            await saveExecutorToDb(executor);
+            executors.set(executorId, executor);
+            await saveTaskToDb(task);
+
+            sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task, executorId) });
+          } catch (error) {
+            console.error("POST /api/tasks/respond error:", error);
+            sendJson(res, 500, { error: "Failed to save response" });
+          }
+        });
+
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/api/tasks/assign") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const taskId = Number(payload.taskId || 0);
+            const executorId = Number(payload.executorId || 0);
+            const managerContact = String(payload.managerContact || "").trim();
+
+            const task = tasks.find(item => Number(item.id) === taskId);
+            const executor = executors.get(executorId);
+            const selectedResponse = task?.responses?.find(item => Number(item.executorId) === executorId && item.decision === "Принял");
+
+            if (!task) {
+              sendJson(res, 404, { error: "Task not found" });
+              return;
+            }
+
+            if (managerContact && String(task.managerContact || "").trim() !== managerContact) {
+              sendJson(res, 403, { error: "Cannot assign executor to another manager task" });
+              return;
+            }
+
+            if (!executor || !selectedResponse) {
+              sendJson(res, 400, { error: "Executor response not found" });
+              return;
+            }
+
+            task.assignedExecutorId = executorId;
+            task.assignedExecutorName = selectedResponse.executorName;
+            task.assignedExecutorContact = selectedResponse.executorContact;
+            task.status = "Назначена";
+            if (!task.timeline) task.timeline = {};
+            task.timeline.assignedAt = new Date().toISOString();
+
+            await saveTaskToDb(task);
+
+            sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+          } catch (error) {
+            console.error("POST /api/tasks/assign error:", error);
+            sendJson(res, 500, { error: "Failed to assign executor" });
           }
         });
 
