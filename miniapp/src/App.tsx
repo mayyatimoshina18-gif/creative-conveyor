@@ -203,6 +203,27 @@ function getPaymentPrompt(paymentMethod: string) {
   };
 }
 
+
+function normalizeInvoiceList(value: ExecutorProfile["paymentInvoices"]) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      value: typeof item === "string" ? item : String(item?.value || "").trim(),
+      createdAt:
+        typeof item === "string"
+          ? new Date().toISOString()
+          : String(item?.createdAt || new Date().toISOString())
+    }))
+    .filter((item) => item.value);
+}
+
+function formatDateLabel(value?: string) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("ru-RU");
+}
+
 export default function App() {
   const [screen, setScreen] = useState<
     | "welcome"
@@ -278,6 +299,8 @@ export default function App() {
   const [managerEditReviewSpeed, setManagerEditReviewSpeed] = useState("5");
   const [managerEditReviewAesthetics, setManagerEditReviewAesthetics] = useState("5");
   const [managerEditContractData, setManagerEditContractData] = useState("");
+  const [managerEditInvoices, setManagerEditInvoices] = useState<Array<{ value: string; createdAt: string }>>([]);
+  const [newManagerInvoice, setNewManagerInvoice] = useState("");
 
   const [createTitle, setCreateTitle] = useState("");
   const [createCategories, setCreateCategories] = useState<string[]>([]);
@@ -344,6 +367,8 @@ export default function App() {
     setManagerEditReviewSpeed(String(profile.reviewSpeed ?? 5));
     setManagerEditReviewAesthetics(String(profile.reviewAesthetics ?? 5));
     setManagerEditContractData(getPaymentDetailsText(profile.contractData as any));
+    setManagerEditInvoices(normalizeInvoiceList(profile.paymentInvoices));
+    setNewManagerInvoice("");
   };
 
   const toggleManagerEditSpecialization = (value: string) => {
@@ -362,6 +387,21 @@ export default function App() {
     setManagerEditUnavailableDays((prev) =>
       prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
     );
+  };
+
+
+  const handleAddManagerInvoice = () => {
+    const value = newManagerInvoice.trim();
+    if (!value) return;
+    setManagerEditInvoices((prev) => [
+      { value, createdAt: new Date().toISOString() },
+      ...prev
+    ]);
+    setNewManagerInvoice("");
+  };
+
+  const handleRemoveManagerInvoice = (targetCreatedAt: string) => {
+    setManagerEditInvoices((prev) => prev.filter((item) => item.createdAt !== targetCreatedAt));
   };
 
   const loadTasks = async () => {
@@ -647,7 +687,8 @@ export default function App() {
           reviewAccuracy: Number(managerEditReviewAccuracy),
           reviewSpeed: Number(managerEditReviewSpeed),
           reviewAesthetics: Number(managerEditReviewAesthetics),
-          contractData: managerEditContractData.trim() || null
+          contractData: managerEditContractData.trim() || null,
+          paymentInvoices: managerEditInvoices
         })
       });
 
