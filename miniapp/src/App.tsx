@@ -47,6 +47,15 @@ type Task = {
   paymentMethod?: string | null;
   paymentRequired?: boolean;
   revisionCount?: number;
+  responsesCount?: number;
+  responses?: Array<{
+    executorId: number;
+    executorName: string;
+    executorContact: string;
+    decision: string;
+    rating?: number | null;
+    completedOrders?: number;
+  }>;
 };
 
 type TasksResponse = {
@@ -463,8 +472,10 @@ export default function App() {
     active: [],
     archived: []
   });
+  const [managerTasks, setManagerTasks] = useState<Task[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState("");
+  const [managerTasksError, setManagerTasksError] = useState("");
 
   const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
   const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
@@ -636,11 +647,37 @@ export default function App() {
     }
   };
 
+  const loadManagerTasks = async () => {
+    try {
+      setManagerTasksError("");
+      if (!createManagerContact.trim()) {
+        setManagerTasks([]);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact.trim())}`, {
+        method: "GET"
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error((data as any)?.error || "Failed to load manager tasks");
+      }
+
+      setManagerTasks(Array.isArray((data as any)?.tasks) ? (data as any).tasks : []);
+    } catch (error) {
+      console.error("Failed to load manager tasks:", error);
+      setManagerTasksError("Не удалось загрузить отклики исполнителей");
+    }
+  };
+
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks();
+      void loadManagerTasks();
     }
-  }, [screen, activeBottomTab]);
+  }, [screen, activeBottomTab, createManagerContact]);
 
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "executors") {
@@ -764,6 +801,7 @@ export default function App() {
       if (!response.ok) throw new Error("Failed to save decision");
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
       await loadTasks();
+      await loadManagerTasks();
     } catch (error) {
       console.error("Failed to save executor decision:", error);
       setExecutorTasksError("Не удалось обновить статус задачи");
@@ -1787,10 +1825,11 @@ export default function App() {
                 {activeBottomTab === "tasks" ? (
                   <>
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
+                    {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{managerTasksError}</div> : null}
                     {isLoadingTasks ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : tasksError ? (
-                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => void loadTasks()} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
+                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
                     ) : visibleTasks.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
@@ -1799,6 +1838,33 @@ export default function App() {
                           {visibleTasks.map((task) => (
                             <div key={task.id} className="space-y-3">
                               <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                              {activeTopTab === "waiting" ? (
+                                (() => {
+                                  const managerTask = managerTasks.find((item) => item.id === task.id) || task;
+                                  const acceptedResponses = (managerTask.responses || []).filter((item) => item.decision === "Принял");
+                                  return acceptedResponses.length ? (
+                                    <div className="space-y-2">
+                                      <div className="text-sm text-white/55">Откликнулись исполнители</div>
+                                      {acceptedResponses.map((response) => (
+                                        <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                              <div className="text-sm font-medium text-white">{response.executorName}</div>
+                                              <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
+                                            </div>
+                                            <button
+                                              onClick={() => void handleAssignTask(task.id, response.executorId)}
+                                              className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black"
+                                            >
+                                              Подтвердить
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null;
+                                })()
+                              ) : null}
                               {activeTopTab === "active" ? (
                                 <>
                                   <PipelineView task={task} compact />
