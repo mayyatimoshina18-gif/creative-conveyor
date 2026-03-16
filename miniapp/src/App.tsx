@@ -116,6 +116,15 @@ function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
 }
 
+function NotificationBadge({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <div className="absolute right-2 top-2 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#56FFEF] px-1.5 text-[10px] font-semibold text-black shadow-[0_0_0_3px_rgba(11,11,16,0.95)]">
+      {count > 99 ? "99+" : count}
+    </div>
+  );
+}
+
 function RoleButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -1752,7 +1761,8 @@ export default function App() {
 
               <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl">
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                  <button onClick={() => { setIsExecutorEditing(false); setExecutorBottomTab("tasks"); }} className={cn("relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", executorBottomTab === "tasks" ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}>
+                    <NotificationBadge count={executorTasksBadgeCount} />
                     <Briefcase className="h-5 w-5" />
                     <span className="text-[10px] leading-none">Задачи</span>
                   </button>
@@ -2401,7 +2411,31 @@ export default function App() {
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
                 )}
               </div>
-              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => { const Icon = tab.icon; const active = activeBottomTab === tab.key; return <button key={tab.key} onClick={() => setActiveBottomTab(tab.key)} className={cn("flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition", active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]")}><Icon className="h-5 w-5" /><span className="text-[10px] leading-none">{tab.label}</span></button>; })}</div></div>
+              <div className="fixed bottom-0 left-1/2 w-full max-w-[430px] -translate-x-1/2 border-t border-white/8 bg-[#0b0b10]/95 px-3 pb-4 pt-3 backdrop-blur-xl"><div className="grid grid-cols-5 gap-1">{bottomTabs.map((tab) => {
+                    const Icon = tab.icon;
+                    const active = activeBottomTab === tab.key;
+                    const badgeCount =
+                      tab.key === "executors"
+                        ? managerExecutorsBadgeCount
+                        : tab.key === "tasks"
+                        ? managerTasksBadgeCount
+                        : 0;
+
+                    return (
+                      <button
+                        key={tab.key}
+                        onClick={() => setActiveBottomTab(tab.key)}
+                        className={cn(
+                          "relative flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 transition",
+                          active ? "bg-[#56FFEF]/15 text-[#56FFEF]" : "text-white/45 hover:bg-white/[0.04]"
+                        )}
+                      >
+                        <NotificationBadge count={badgeCount} />
+                        <Icon className="h-5 w-5" />
+                        <span className="text-[10px] leading-none">{tab.label}</span>
+                      </button>
+                    );
+                  })}</div></div>
             </motion.div>
           )}
         </AnimatePresence>
