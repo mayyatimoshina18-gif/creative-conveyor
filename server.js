@@ -3639,6 +3639,7 @@ ${task.title}`,
           const stageKey = String(payload.stageKey || "");
           const value = String(payload.value || "").trim();
           if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
+          task.timeline = task.timeline || {};
           const field = { type: "text", value, createdAt: new Date().toISOString() };
           task.stageMaterials = task.stageMaterials || {};
           if (!Array.isArray(task.stageMaterials.thirtyHistory)) task.stageMaterials.thirtyHistory = [];
