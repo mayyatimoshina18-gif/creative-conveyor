@@ -423,7 +423,7 @@ function TaskDetailModal({
           <PipelineView task={task} />
         </div>
 
-        {task.status === "На проверке" ? (
+        {task.status === "На проверке" && (onManagerApprove || onManagerOpenFixes) ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button
               onClick={() => onManagerOpenFixes?.(task.id)}
@@ -443,7 +443,7 @@ function TaskDetailModal({
           </div>
         ) : null}
 
-        {task.status === "Счёт загружен" ? (
+        {task.status === "Счёт загружен" && onManagerMarkPaid ? (
           <div className="mt-4">
             <button
               onClick={() => {
