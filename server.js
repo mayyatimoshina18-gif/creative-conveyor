@@ -3490,6 +3490,7 @@ comment,
           if (!task || !executor) return sendJson(res, 404, { error: "Task or executor not found" });
 
           let responsePayload = (task.responses || []).find((r) => Number(r.executorId) === telegramId) || null;
+          const responseCreatedAt = responsePayload?.createdAt || new Date().toISOString();
 
           if (!responsePayload) {
             responsePayload = {
@@ -3497,16 +3498,30 @@ comment,
               executorName: executor.fullName || executor.username || "Без имени",
               executorContact: getExecutorContactFromProfile(executor),
               decision,
-              createdAt: new Date().toISOString()
+              createdAt: responseCreatedAt
             };
             task.responses.push(responsePayload);
-            executor.responseHistory = executor.responseHistory || [];
-            executor.responseHistory.push({ taskId: task.id, taskTitle: task.title, decision, createdAt: new Date().toISOString() });
-            if (decision === "Принял" && task.status === "Ждёт исполнителя") task.status = "Есть отклики";
-            await saveExecutorToDb(executor);
-            executors.set(executor.telegramId, executor);
-            await saveTaskToDb(task);
+          } else {
+            responsePayload.executorName = executor.fullName || executor.username || responsePayload.executorName || "Без имени";
+            responsePayload.executorContact = getExecutorContactFromProfile(executor) || responsePayload.executorContact;
+            responsePayload.decision = decision;
+            responsePayload.createdAt = responseCreatedAt;
           }
+
+          executor.responseHistory = executor.responseHistory || [];
+          const historyIndex = executor.responseHistory.findIndex((item) => Number(item.taskId) === Number(task.id));
+          const historyPayload = { taskId: task.id, taskTitle: task.title, decision, createdAt: responseCreatedAt };
+          if (historyIndex >= 0) {
+            executor.responseHistory[historyIndex] = historyPayload;
+          } else {
+            executor.responseHistory.push(historyPayload);
+          }
+
+          if (decision === "Принял" && ["Ждёт исполнителя", "Создана"].includes(task.status)) task.status = "Есть отклики";
+
+          await saveExecutorToDb(executor);
+          executors.set(executor.telegramId, executor);
+          await saveTaskToDb(task);
 
           if (decision === "Принял") {
             const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
