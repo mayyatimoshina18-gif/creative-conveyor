@@ -415,8 +415,7 @@ function TaskDetailModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div><RenderTextOrLink value={task.refsText || "—"} /></div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div><RenderTextOrLink value={task.comment || "—"} /></div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Куда отгружать</div><div><RenderTextOrLink value={task.deliveryTarget || "—"} /></div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Последняя правка менеджера</div><div><RenderTextOrLink value={task.stageMaterials?.fixesNote?.value || "—"} /></div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div><RenderTextOrLink value={task.stageMaterials?.invoice?.value || "—"} /></div></div>
+                    <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div><RenderTextOrLink value={task.stageMaterials?.invoice?.value || "—"} /></div></div>
         </div>
 
         <div className="mt-4">
@@ -462,9 +461,6 @@ function TaskDetailModal({
             items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)}
             onOpenAll={() => onOpenAllFixes?.(task)}
           />
-          <HistoryList title="История сдач 30%" items={mergeHistoryItems(task.stageMaterials?.thirtyHistory, task.stageMaterials?.thirty)} />
-          <HistoryList title="История сдач 60%" items={mergeHistoryItems(task.stageMaterials?.sixtyHistory, task.stageMaterials?.sixty)} />
-          <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
         </div>
 
         <div className="mt-4 space-y-2">
@@ -2697,20 +2693,25 @@ function mergeHistoryItems(
         }))
     : [];
 
-  if (normalizedHistory.length) {
-    return normalizedHistory
-      .sort((a, b) => {
-        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return bTime - aTime;
-      });
-  }
+  const merged = [
+    ...normalizedHistory,
+    ...(fallback?.value
+      ? [{ value: String(fallback.value).trim(), createdAt: fallback.createdAt }]
+      : [])
+  ];
 
-  if (fallback?.value) {
-    return [{ value: fallback.value, createdAt: fallback.createdAt }];
-  }
-
-  return [];
+  return merged
+    .filter((item) => item?.value)
+    .filter((item, index, array) => {
+      return array.findIndex(
+        (candidate) => candidate.value === item.value && candidate.createdAt === item.createdAt
+      ) === index;
+    })
+    .sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
 }
 
 function FixesPreviewCard({
