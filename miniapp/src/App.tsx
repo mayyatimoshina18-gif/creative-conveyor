@@ -419,38 +419,28 @@ function TaskDetailModal({
           <PipelineView task={task} />
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
-          <HistoryList title="История правок" items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)} />
-          <HistoryList title="История сдач 30%" items={mergeHistoryItems(task.stageMaterials?.thirtyHistory, task.stageMaterials?.thirty)} />
-          <HistoryList title="История сдач 60%" items={mergeHistoryItems(task.stageMaterials?.sixtyHistory, task.stageMaterials?.sixty)} />
-          <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
-        </div>
+        {task.status === "На проверке" ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onManagerOpenFixes?.(task.id)}
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
+            >
+              На правки
+            </button>
+            <button
+              onClick={() => {
+                onManagerApprove?.(task.id);
+                onClose();
+              }}
+              className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+            >
+              Принять
+            </button>
+          </div>
+        ) : null}
 
-        <div className="mt-4 space-y-2">
-          {task.status === "На проверке" ? (
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  onClose();
-                  onManagerOpenFixes?.(task.id);
-                }}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
-              >
-                На правки
-              </button>
-              <button
-                onClick={() => {
-                  onManagerApprove?.(task.id);
-                  onClose();
-                }}
-                className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-              >
-                Принять
-              </button>
-            </div>
-          ) : null}
-
-          {task.status === "Счёт загружен" ? (
+        {task.status === "Счёт загружен" ? (
+          <div className="mt-4">
             <button
               onClick={() => {
                 onManagerMarkPaid?.(task.id);
@@ -460,8 +450,17 @@ function TaskDetailModal({
             >
               Счёт оплачен
             </button>
-          ) : null}
+          </div>
+        ) : null}
 
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <HistoryList title="История правок" items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)} />
+          <HistoryList title="История сдач 30%" items={mergeHistoryItems(task.stageMaterials?.thirtyHistory, task.stageMaterials?.thirty)} />
+          <HistoryList title="История сдач 60%" items={mergeHistoryItems(task.stageMaterials?.sixtyHistory, task.stageMaterials?.sixty)} />
+          <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
+        </div>
+
+        <div className="mt-4 space-y-2">
           <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
         </div>
 
@@ -684,9 +683,11 @@ export default function App() {
     setManagerEditInvoices((prev) => prev.filter((item) => item.createdAt !== targetCreatedAt));
   };
 
-  const loadTasks = async () => {
+  const loadTasks = async (silent = false) => {
     try {
-      setIsLoadingTasks(true);
+      if (!silent) {
+        setIsLoadingTasks(true);
+      }
       setTasksError("");
 
       const response = await fetch(`${API_BASE}/api/tasks`, {
@@ -708,13 +709,15 @@ export default function App() {
       console.error("Failed to load tasks:", error);
       setTasksError("Не удалось загрузить задачи с сервера");
     } finally {
-      setIsLoadingTasks(false);
+      if (!silent) {
+        setIsLoadingTasks(false);
+      }
     }
   };
 
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "tasks") {
-      void loadTasks();
+      void loadTasks(false);
       void loadManagerTasks();
     }
   }, [screen, activeBottomTab, createManagerContact]);
@@ -730,7 +733,7 @@ export default function App() {
     if (screen !== "managerApp" || activeBottomTab !== "tasks") return;
 
     const intervalId = window.setInterval(() => {
-      void loadTasks();
+      void loadTasks(true);
       void loadManagerTasks();
     }, 5000);
 
@@ -1060,12 +1063,13 @@ export default function App() {
   const loadManagerTasks = async () => {
     try {
       setManagerTasksError("");
-      if (!createManagerContact.trim()) {
-        setManagerTasks([]);
-        return;
-      }
 
-      const response = await fetch(`${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(createManagerContact.trim())}`, {
+      const managerContact = createManagerContact.trim();
+      const requestUrl = managerContact
+        ? `${API_BASE}/api/tasks/manager?managerContact=${encodeURIComponent(managerContact)}`
+        : `${API_BASE}/api/tasks/manager`;
+
+      const response = await fetch(requestUrl, {
         method: "GET"
       });
 
@@ -1075,16 +1079,7 @@ export default function App() {
         throw new Error((data as any)?.error || "Failed to load manager tasks");
       }
 
-      let tasks = Array.isArray((data as any)?.tasks) ? (data as any).tasks : [];
-
-      if (!tasks.length) {
-        const fallbackResponse = await fetch(`${API_BASE}/api/tasks/manager`, { method: "GET" });
-        const fallbackData = await fallbackResponse.json().catch(() => ({}));
-        if (fallbackResponse.ok) {
-          tasks = Array.isArray((fallbackData as any)?.tasks) ? (fallbackData as any).tasks : [];
-        }
-      }
-
+      const tasks = Array.isArray((data as any)?.tasks) ? (data as any).tasks : [];
       setManagerTasks(tasks);
     } catch (error) {
       console.error("Failed to load manager tasks:", error);
@@ -1990,46 +1985,49 @@ export default function App() {
                               <TaskCard
                                 task={task}
                                 onOpen={() => setSelectedTask(task)}
-                                footer={activeTopTab === "active" ? <PipelineView task={task} compact /> : null}
-                              />
-                              {activeTopTab === "waiting" ? (
-                                (() => {
-                                  const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
-                                  const taskResponses = Array.isArray((managerTask as any).responses) ? (managerTask as any).responses : [];
-                                  return taskResponses.length ? (
-                                    <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
-                                      <div className="text-sm text-white/55">Отклики исполнителей</div>
-                                      {taskResponses.map((response: any) => {
-                                        const rank = getApprovedExecutorRank(response.executorId);
-                                        const accepted = response?.decision === "Принял";
-                                        const declined = response?.decision === "Отклонил";
-                                        return (
-                                          <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
-                                            <div className="flex items-start justify-between gap-3">
-                                              <div>
-                                                <div className="text-sm font-medium text-white">{response.executorName || "Без имени"}</div>
-                                                <div className="mt-1 text-xs text-white/45">{response.executorContact || "Контакт не указан"}</div>
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                  <div className={cn("rounded-full px-2.5 py-1 text-[11px]", accepted ? "border border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : declined ? "border border-white/10 bg-white/5 text-white/70" : "border border-white/10 bg-white/5 text-white/70")}>
-                                                    {response?.decision || "Без решения"}
+                                footer={
+                                  activeTopTab === "active" ? (
+                                    <PipelineView task={task} compact />
+                                  ) : activeTopTab === "waiting" ? (
+                                    (() => {
+                                      const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
+                                      const taskResponses = Array.isArray((managerTask as any).responses) ? (managerTask as any).responses : [];
+                                      return taskResponses.length ? (
+                                        <div className="space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
+                                          <div className="text-sm text-white/55">Отклики исполнителей</div>
+                                          {taskResponses.map((response: any) => {
+                                            const rank = getApprovedExecutorRank(response.executorId);
+                                            const accepted = response?.decision === "Принял";
+                                            const declined = response?.decision === "Отклонил";
+                                            return (
+                                              <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
+                                                <div className="flex items-start justify-between gap-3">
+                                                  <div>
+                                                    <div className="text-sm font-medium text-white">{response.executorName || "Без имени"}</div>
+                                                    <div className="mt-1 text-xs text-white/45">{response.executorContact || "Контакт не указан"}</div>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                      <div className={cn("rounded-full px-2.5 py-1 text-[11px]", accepted ? "border border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : declined ? "border border-white/10 bg-white/5 text-white/70" : "border border-white/10 bg-white/5 text-white/70")}>
+                                                        {response?.decision || "Без решения"}
+                                                      </div>
+                                                      {rank ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Место в рейтинге #{rank}</div> : null}
+                                                      {response.rating != null ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">Рейтинг {response.rating}</div> : null}
+                                                    </div>
                                                   </div>
-                                                  {rank ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Место в рейтинге #{rank}</div> : null}
-                                                  {response.rating != null ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">Рейтинг {response.rating}</div> : null}
+                                                  {accepted ? (
+                                                    <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                                  ) : (
+                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Без назначения</div>
+                                                  )}
                                                 </div>
                                               </div>
-                                              {accepted ? (
-                                                <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
-                                              ) : (
-                                                <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Без назначения</div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null;
-                                })()
-                              ) : null}
+                                            );
+                                          })}
+                                        </div>
+                                      ) : null;
+                                    })()
+                                  ) : null
+                                }
+                              />
                               {activeTopTab === "active" ? (
                                 <>
                                   {task.status === "На проверке" ? (
@@ -2556,12 +2554,13 @@ export default function App() {
             setFixesValue("");
             setFixesClientFault(false);
             setFixesError("");
+            setSelectedTask(null);
           }}
           onManagerMarkPaid={(taskId) => void handleManagerStageAction(taskId, "paid")}
         />
 
         {fixesTaskId ? (
-          <div className="fixed inset-0 z-[65] flex items-end justify-center bg-black/70 p-3">
+          <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/70 p-3">
             <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
               <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
