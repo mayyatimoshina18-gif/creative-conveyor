@@ -523,10 +523,10 @@ function ExecutorProfileViewModal({
 }) {
   if (!profile) return null;
 
-  const invoices = normalizeInvoiceList(profile.paymentInvoices).slice().reverse();
+  const latestInvoices = normalizeInvoiceList(profile.paymentInvoices).slice(-5).reverse();
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
       <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -574,18 +574,97 @@ function ExecutorProfileViewModal({
             <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
           </div>
           <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Все счета</div>
+            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
+            {latestInvoices.length ? (
+              <div className="space-y-2">
+                {latestInvoices.map((invoice, index) => (
+                  <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
+                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-white/45">Счетов пока нет</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+function ExecutorProfileViewModal({
+  profile,
+  onClose
+}: {
+  profile: ExecutorProfile | null;
+  onClose: () => void;
+}) {
+  if (!profile) return null;
+
+  const invoices = Array.isArray(profile.paymentInvoices) ? [...profile.paymentInvoices].slice(-10).reverse() : [];
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
+      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Профиль исполнителя</div>
+            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{profile.fullName || "Без имени"}</div>
+          </div>
+          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          <div className="rounded-full bg-[#56FFEF]/10 px-3 py-1.5 text-sm font-medium text-[#56FFEF]">
+            рейтинг {typeof profile.rating === "number" ? profile.rating : "—"}
+          </div>
+          <div className="rounded-full bg-white/5 px-3 py-1.5 text-sm font-medium text-white/75">
+            выполнено задач {profile.completedOrders || 0}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID</div><div>{profile.executorCode || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="break-words">{profile.telegramContact || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{profile.status || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
+        </div>
+
+        <div className="mt-4 space-y-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
+            <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+            <div><RenderTextOrLink value={profile.portfolio || "—"} /></div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Платёжные данные</div>
+            <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Договор</div>
+            <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
             {invoices.length ? (
               <div className="space-y-2">
-                {invoices.map((invoice, index) => (
-                  <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
-                      {"price" in invoice && invoice.price ? <div className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/60">{invoice.price}</div> : null}
-                    </div>
-                    {"taskTitle" in invoice && invoice.taskTitle ? <div className="mt-2 text-sm font-medium text-white/85">{invoice.taskTitle}</div> : null}
-                    {"taskId" in invoice && invoice.taskId ? <div className="mt-1 text-xs text-white/40">Задача #{invoice.taskId}</div> : null}
-                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
+                {invoices.map((invoice: any, index: number) => (
+                  <div key={`invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-xs text-white/35">{formatDateLabel(invoice?.createdAt) || "Без даты"}</div>
+                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice?.value || "—"} /></div>
                   </div>
                 ))}
               </div>
@@ -593,10 +672,6 @@ function ExecutorProfileViewModal({
               <div className="text-white/45">Счётов пока нет</div>
             )}
           </div>
-        </div>
-
-        <div className="mt-4">
-          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
         </div>
       </div>
     </div>
@@ -639,7 +714,6 @@ export default function App() {
   const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
   const [executorTasksError, setExecutorTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [selectedExecutorProfile, setSelectedExecutorProfile] = useState<ExecutorProfile | null>(null);
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
   const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
   const [stageValue, setStageValue] = useState("");
@@ -1364,40 +1438,6 @@ export default function App() {
     setIsManagerEditingRegistryExecutor(true);
   };
 
-  const openExecutorProfileById = async (executorId: number) => {
-    try {
-      let profile = approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
-
-      if (!profile) {
-        const response = await fetch(`${API_BASE}/api/executors/approved`, { method: "GET" });
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error((data as any)?.error || "Failed to load approved executors");
-        }
-
-        const list = Array.isArray((data as any)?.executors) ? ((data as any).executors as ExecutorProfile[]) : [];
-        list.sort((a: ExecutorProfile, b: ExecutorProfile) => {
-          const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
-          if (ratingDiff !== 0) return ratingDiff;
-          return Number(b.completedOrders || 0) - Number(a.completedOrders || 0);
-        });
-        setApprovedExecutors(list);
-        profile = list.find((item) => Number(item.telegramId) === Number(executorId)) || null;
-      }
-
-      if (!profile) {
-        setManagerTasksError("Профиль исполнителя пока не найден");
-        return;
-      }
-
-      setSelectedExecutorProfile(profile);
-    } catch (error) {
-      console.error("Failed to open executor profile:", error);
-      setManagerTasksError("Не удалось открыть профиль исполнителя");
-    }
-  };
-
   const handleManagerSaveExecutor = async () => {
     if (!selectedApprovedExecutor?.telegramId) {
       setManagerExecutorMessage("Исполнитель не выбран");
@@ -2084,12 +2124,6 @@ export default function App() {
                   <>
                     {!isExecutorEditing ? (
                       <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Выполнено задач</div><div className="text-2xl font-semibold text-white">{executor?.stats?.completedTasks ?? executor?.completedOrders ?? 0}</div></div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Рейтинг</div><div className="text-2xl font-semibold text-white">{typeof executor?.rating === "number" ? executor.rating : "—"}</div></div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.averageRevisions === "number" ? executor.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Заработано</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.earnedAmount === "number" ? `${executor.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
-                        </div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
