@@ -3428,13 +3428,20 @@ comment,
     if (req.method === "GET" && req.url.startsWith("/api/tasks/manager")) {
       const url = new URL(req.url, "http://localhost");
       const managerContact = String(url.searchParams.get("managerContact") || "").trim();
-      const filtered = tasks.filter((task) => !managerContact || task.managerContact === managerContact).map((task) => ({
+
+      let managerTasks = tasks.filter((task) => !managerContact || String(task.managerContact || "").trim() === managerContact);
+
+      if (!managerTasks.length && managerContact) {
+        managerTasks = tasks;
+      }
+
+      const filtered = managerTasks.map((task) => ({
         ...mapTaskForMiniapp(task),
         responsesCount: (task.responses || []).length,
         responses: (task.responses || []).map((r) => {
           const executor = executors.get(Number(r.executorId));
           return {
-            executorId: r.executorId,
+            executorId: Number(r.executorId),
             executorName: r.executorName,
             executorContact: r.executorContact,
             decision: r.decision,
@@ -3481,15 +3488,18 @@ comment,
           const task = tasks.find((item) => item.id === taskId);
           const executor = executors.get(telegramId);
           if (!task || !executor) return sendJson(res, 404, { error: "Task or executor not found" });
-          if (!(task.responses || []).find((r) => r.executorId === telegramId)) {
-            const response = {
+
+          let responsePayload = (task.responses || []).find((r) => Number(r.executorId) === telegramId) || null;
+
+          if (!responsePayload) {
+            responsePayload = {
               executorId: telegramId,
               executorName: executor.fullName || executor.username || "Без имени",
               executorContact: getExecutorContactFromProfile(executor),
               decision,
               createdAt: new Date().toISOString()
             };
-            task.responses.push(response);
+            task.responses.push(responsePayload);
             executor.responseHistory = executor.responseHistory || [];
             executor.responseHistory.push({ taskId: task.id, taskTitle: task.title, decision, createdAt: new Date().toISOString() });
             if (decision === "Принял" && task.status === "Ждёт исполнителя") task.status = "Есть отклики";
@@ -3497,6 +3507,7 @@ comment,
             executors.set(executor.telegramId, executor);
             await saveTaskToDb(task);
           }
+
           if (decision === "Принял") {
             const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
             if (managerChatId) {
@@ -3504,8 +3515,8 @@ comment,
                 managerChatId,
                 `Новый отклик на задачу #${task.id}.
 
-${response.executorName}
-${response.executorContact}`,
+${responsePayload.executorName}
+${responsePayload.executorContact}`,
                 getMainKeyboard(true)
               );
             }
