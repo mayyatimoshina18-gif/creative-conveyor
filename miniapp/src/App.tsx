@@ -1901,7 +1901,7 @@ export default function App() {
                               <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
                               {activeTopTab === "waiting" ? (
                                 (() => {
-                                  const managerTask = managerTasks.find((item) => item.id === task.id) || task;
+                                  const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
                                   const acceptedResponses = ((managerTask as any).responses || []).filter((item: any) => item.decision === "Принял");
                                   return acceptedResponses.length ? (
                                     <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
