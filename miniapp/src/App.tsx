@@ -526,7 +526,7 @@ function ExecutorProfileViewModal({
   const invoices = normalizeInvoiceList(profile.paymentInvoices).slice().reverse();
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
       <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -639,6 +639,7 @@ export default function App() {
   const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
   const [executorTasksError, setExecutorTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedExecutorProfile, setSelectedExecutorProfile] = useState<ExecutorProfile | null>(null);
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
   const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
   const [stageValue, setStageValue] = useState("");
@@ -1361,6 +1362,40 @@ export default function App() {
     fillManagerExecutorForm(profile);
     setManagerExecutorMessage("");
     setIsManagerEditingRegistryExecutor(true);
+  };
+
+  const openExecutorProfileById = async (executorId: number) => {
+    try {
+      let profile = approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+
+      if (!profile) {
+        const response = await fetch(`${API_BASE}/api/executors/approved`, { method: "GET" });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error((data as any)?.error || "Failed to load approved executors");
+        }
+
+        const list = Array.isArray((data as any)?.executors) ? ((data as any).executors as ExecutorProfile[]) : [];
+        list.sort((a: ExecutorProfile, b: ExecutorProfile) => {
+          const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+          if (ratingDiff !== 0) return ratingDiff;
+          return Number(b.completedOrders || 0) - Number(a.completedOrders || 0);
+        });
+        setApprovedExecutors(list);
+        profile = list.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+      }
+
+      if (!profile) {
+        setManagerTasksError("Профиль исполнителя пока не найден");
+        return;
+      }
+
+      setSelectedExecutorProfile(profile);
+    } catch (error) {
+      console.error("Failed to open executor profile:", error);
+      setManagerTasksError("Не удалось открыть профиль исполнителя");
+    }
   };
 
   const handleManagerSaveExecutor = async () => {
