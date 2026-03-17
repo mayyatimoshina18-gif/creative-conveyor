@@ -593,83 +593,6 @@ function ExecutorProfileViewModal({
 
 
 
-function ExecutorProfileViewModal({
-  profile,
-  onClose
-}: {
-  profile: ExecutorProfile | null;
-  onClose: () => void;
-}) {
-  if (!profile) return null;
-
-  const invoices = Array.isArray(profile.paymentInvoices) ? [...profile.paymentInvoices].slice(-10).reverse() : [];
-
-  return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
-      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Профиль исполнителя</div>
-            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{profile.fullName || "Без имени"}</div>
-          </div>
-          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="mb-4 flex flex-wrap gap-2">
-          <div className="rounded-full bg-[#56FFEF]/10 px-3 py-1.5 text-sm font-medium text-[#56FFEF]">
-            рейтинг {typeof profile.rating === "number" ? profile.rating : "—"}
-          </div>
-          <div className="rounded-full bg-white/5 px-3 py-1.5 text-sm font-medium text-white/75">
-            выполнено задач {profile.completedOrders || 0}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID</div><div>{profile.executorCode || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="break-words">{profile.telegramContact || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{profile.status || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
-        </div>
-
-        <div className="mt-4 space-y-3 text-sm text-white/75">
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
-            <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
-            <div><RenderTextOrLink value={profile.portfolio || "—"} /></div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Платёжные данные</div>
-            <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Договор</div>
-            <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
-            {invoices.length ? (
-              <div className="space-y-2">
-                {invoices.map((invoice: any, index: number) => (
-                  <div key={`invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="text-xs text-white/35">{formatDateLabel(invoice?.createdAt) || "Без даты"}</div>
-                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice?.value || "—"} /></div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-white/45">Счётов пока нет</div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 
 export default function App() {
@@ -707,6 +630,7 @@ export default function App() {
   const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
   const [executorTasksError, setExecutorTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedExecutorProfile, setSelectedExecutorProfile] = useState<ExecutorProfile | null>(null);
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
   const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
   const [stageValue, setStageValue] = useState("");
@@ -1429,6 +1353,43 @@ export default function App() {
     fillManagerExecutorForm(profile);
     setManagerExecutorMessage("");
     setIsManagerEditingRegistryExecutor(true);
+  };
+
+  const openExecutorProfileById = async (executorId: number) => {
+    try {
+      let profile =
+        approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+
+      if (!profile) {
+        const response = await fetch(`${API_BASE}/api/executors/approved`, {
+          method: "GET"
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error((data as any)?.error || "Failed to load approved executors");
+        }
+
+        const list = Array.isArray((data as any)?.executors) ? ((data as any).executors as ExecutorProfile[]) : [];
+        list.sort((a: ExecutorProfile, b: ExecutorProfile) => {
+          const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+          if (ratingDiff !== 0) return ratingDiff;
+          return Number(b.completedOrders || 0) - Number(a.completedOrders || 0);
+        });
+        setApprovedExecutors(list);
+        profile = list.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+      }
+
+      if (!profile) {
+        setManagerTasksError("Профиль исполнителя пока не найден");
+        return;
+      }
+
+      setSelectedExecutorProfile(profile);
+    } catch (error) {
+      console.error("Failed to open executor profile:", error);
+      setManagerTasksError("Не удалось открыть профиль исполнителя");
+    }
   };
 
   const handleManagerSaveExecutor = async () => {
@@ -2290,9 +2251,22 @@ export default function App() {
                                                     </div>
                                                   </div>
                                                   {accepted ? (
-                                                    <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                                    <div className="flex items-center gap-2">
+                                                      <button
+                                                        onClick={() => void openExecutorProfileById(response.executorId)}
+                                                        className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white"
+                                                      >
+                                                        Профиль
+                                                      </button>
+                                                      <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                                    </div>
                                                   ) : (
-                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Ожидает</div>
+                                                    <button
+                                                      onClick={() => void openExecutorProfileById(response.executorId)}
+                                                      className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75"
+                                                    >
+                                                      Профиль
+                                                    </button>
                                                   )}
                                                 </div>
                                               </div>
@@ -2434,10 +2408,22 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-3">
-                                  <FormInput type="number" min="1" max="5" value={moderationAccuracy} onChange={(e) => setModerationAccuracy(e.target.value)} placeholder="ТЗ" />
-                                  <FormInput type="number" min="1" max="5" value={moderationSpeed} onChange={(e) => setModerationSpeed(e.target.value)} placeholder="Сроки" />
-                                  <FormInput type="number" min="1" max="5" value={moderationAesthetics} onChange={(e) => setModerationAesthetics(e.target.value)} placeholder="Эстетика" />
+                                <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                                  <div className="mb-3 text-sm text-white/55">Оцените выполнение тестового задания</div>
+                                  <div className="grid grid-cols-1 gap-3">
+                                    <div>
+                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Соблюдение ТЗ</div>
+                                      <FormInput type="number" min="1" max="5" value={moderationAccuracy} onChange={(e) => setModerationAccuracy(e.target.value)} placeholder="От 1 до 5" />
+                                    </div>
+                                    <div>
+                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Срок</div>
+                                      <FormInput type="number" min="1" max="5" value={moderationSpeed} onChange={(e) => setModerationSpeed(e.target.value)} placeholder="От 1 до 5" />
+                                    </div>
+                                    <div>
+                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Эстетика</div>
+                                      <FormInput type="number" min="1" max="5" value={moderationAesthetics} onChange={(e) => setModerationAesthetics(e.target.value)} placeholder="От 1 до 5" />
+                                    </div>
+                                  </div>
                                 </div>
 
                                 <div className="text-xs text-white/35">
