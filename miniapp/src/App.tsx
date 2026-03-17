@@ -44,6 +44,7 @@ type Task = {
     final?: { value?: string; createdAt?: string } | null;
     fixesNote?: { value?: string; createdAt?: string } | null;
     invoice?: { value?: string; createdAt?: string } | null;
+    paymentMeta?: { required?: boolean; method?: string | null } | null;
     thirtyHistory?: Array<{ value?: string; createdAt?: string }> | null;
     sixtyHistory?: Array<{ value?: string; createdAt?: string }> | null;
     finalHistory?: Array<{ value?: string; createdAt?: string }> | null;
@@ -277,16 +278,17 @@ function getCurrentStageLabel(status?: string | null) {
 function getPipelineSteps(task: Task) {
   const status = task.status || "";
   const materials = task.stageMaterials || {};
-  return [
+  const paymentRequired = Boolean(task.paymentRequired || task.stageMaterials?.paymentMeta?.required || ["ИП", "Самозанятость"].includes(String(task.paymentMethod || task.stageMaterials?.paymentMeta?.method || "")));
+  const steps = [
     {
       key: "brief",
       title: "Изучил ТЗ",
-      state: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+      state: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status)
         ? "done"
         : status === "Назначена"
         ? "active"
         : "upcoming",
-      meta: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status)
+      meta: ["ТЗ изучено", "В работе", "30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status)
         ? "Подтверждено исполнителем"
         : status === "Назначена"
         ? "Текущий этап"
@@ -295,34 +297,53 @@ function getPipelineSteps(task: Task) {
     {
       key: "30",
       title: "30%",
-      state: status === "В работе" ? "active" : materials.thirty || ["30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      state: status === "В работе" ? "active" : materials.thirty || ["30%", "60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status) ? "done" : "upcoming",
       meta: materials.thirty?.value || (status === "В работе" ? "Текущий этап" : "Материал не загружен")
     },
     {
       key: "60",
       title: "60%",
-      state: status === "30%" ? "active" : materials.sixty || ["60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      state: status === "30%" ? "active" : materials.sixty || ["60%", "На проверке", "Правки", "Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status) ? "done" : "upcoming",
       meta: materials.sixty?.value || (status === "30%" ? "Текущий этап" : "Материал не загружен")
     },
     {
       key: "final",
       title: "Финал",
-      state: status === "60%" || status === "Правки" ? "active" : materials.final || ["На проверке", "Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      state: status === "60%" || status === "Правки" ? "active" : materials.final || ["На проверке", "Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status) ? "done" : "upcoming",
       meta: materials.final?.value || ((status === "60%" || status === "Правки") ? "Текущий этап" : "Материал не загружен")
     },
     {
       key: "review",
       title: "Проверка менеджером",
-      state: status === "На проверке" ? "active" : ["Выполнена", "Не оплачена", "Оплачена"].includes(status) ? "done" : "upcoming",
+      state: status === "На проверке" ? "active" : ["Выполнена", "Не оплачена", "Оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты"].includes(status) ? "done" : "upcoming",
       meta: status === "На проверке" ? "Менеджер проверяет результат" : "Ещё не начато"
-    },
-    {
-      key: "payment",
-      title: "Оплата",
-      state: status === "Выполнена" || status === "Не оплачена" ? "active" : status === "Оплачена" ? "done" : "upcoming",
-      meta: status === "Оплачена" ? "Оплачено" : status === "Выполнена" || status === "Не оплачена" ? "Ожидает оплату" : "Ещё не начато"
     }
-  ] as const;
+  ] as Array<{ key: string; title: string; state: string; meta: string }>;
+
+  if (paymentRequired) {
+    steps.push({
+      key: "invoice",
+      title: "Счёт",
+      state: status === "Ожидает счёт" ? "active" : materials.invoice || ["Счёт загружен", "Ожидает подтверждения оплаты", "Оплачена"].includes(status) ? "done" : "upcoming",
+      meta: materials.invoice?.value || (status === "Ожидает счёт" ? "Загрузите счёт на оплату" : "Счёт ещё не загружен")
+    });
+  }
+
+  steps.push({
+    key: "payment",
+    title: "Оплата менеджером",
+    state: (paymentRequired ? status === "Счёт загружен" : ["Выполнена", "Не оплачена"].includes(status)) ? "active" : ["Ожидает подтверждения оплаты", "Оплачена"].includes(status) ? "done" : "upcoming",
+    meta: ["Ожидает подтверждения оплаты", "Оплачена"].includes(status) ? "Оплата отправлена" : (paymentRequired ? (status === "Счёт загружен" ? "Менеджер должен оплатить счёт" : "Ещё не начато") : (["Выполнена", "Не оплачена"].includes(status) ? "Менеджер должен отметить оплату" : "Ещё не начато"))
+  });
+
+  steps.push({
+    key: "paymentConfirm",
+    title: "Подтверждение исполнителя",
+    state: status === "Ожидает подтверждения оплаты" ? "active" : status === "Оплачена" ? "done" : "upcoming",
+    meta: status === "Ожидает подтверждения оплаты" ? "Исполнитель подтверждает получение денег" : status === "Оплачена" ? "Получение денег подтверждено" : "Ещё не начато"
+  });
+
+  return steps as const;
 }
 
 function PipelineView({ task, compact = false }: { task: Task; compact?: boolean }) {
@@ -442,7 +463,7 @@ function TaskDetailModal({
           </div>
         ) : null}
 
-        {task.status === "Счёт загружен" && onManagerMarkPaid ? (
+        {["Счёт загружен", "Выполнена", "Не оплачена"].includes(String(task.status || "")) && onManagerMarkPaid ? (
           <div className="mt-4">
             <button
               onClick={() => {
@@ -451,7 +472,7 @@ function TaskDetailModal({
               }}
               className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
             >
-              Счёт оплачен
+              {task.status === "Счёт загружен" ? "Счёт оплачен" : "Отметить оплату"}
             </button>
           </div>
         ) : null}
@@ -945,6 +966,8 @@ export default function App() {
     if (status === "В работе") return "Загрузить 30%";
     if (status === "30%") return "Загрузить 60%";
     if (status === "60%" || status === "Правки") return "Сдать задачу";
+    if (status === "Ожидает счёт") return "Загрузить счёт";
+    if (status === "Ожидает подтверждения оплаты") return "Подтвердить получение денег";
     return null;
   };
 
@@ -970,8 +993,26 @@ export default function App() {
       return;
     }
 
+    if (label === "Подтвердить получение денег") {
+      try {
+        const response = await fetch(`${API_BASE}/api/tasks/confirm-payment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId: task.id, telegramId: executor.telegramId })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error((data as any)?.error || "Failed to confirm payment");
+        await loadExecutorTasks(executor.telegramId);
+        await loadTasks();
+      } catch (error) {
+        console.error("Failed to confirm payment:", error);
+        setExecutorTasksError("Не удалось подтвердить получение оплаты");
+      }
+      return;
+    }
+
     setStageTaskId(task.id);
-    setStageKey(label === "Загрузить 30%" ? "30" : label === "Загрузить 60%" ? "60" : "final");
+    setStageKey(label === "Загрузить 30%" ? "30" : label === "Загрузить 60%" ? "60" : label === "Загрузить счёт" ? "invoice" : "final");
     setStageValue("");
     setStageError("");
   };
@@ -984,7 +1025,8 @@ export default function App() {
     }
     try {
       setStageLoading(true);
-      const response = await fetch(`${API_BASE}/api/tasks/stage-submit`, {
+      const endpoint = stageKey === "invoice" ? "/api/tasks/invoice-submit" : "/api/tasks/stage-submit";
+      const response = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
@@ -2028,8 +2070,8 @@ export default function App() {
                                       ) : null}
                                       {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
                                         <div className="grid grid-cols-2 gap-2">
-                                          <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
-                                          <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Оплачена</button>
+                                          <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отложить оплату</button>
+                                          <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Отметить оплату</button>
                                         </div>
                                       ) : null}
                                     </div>
@@ -2636,9 +2678,9 @@ export default function App() {
           <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
             <div className="w-full max-w-[430px] rounded-[26px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-4 text-xl font-semibold text-white">
-                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
+                {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : stageKey === "invoice" ? "Загрузить счёт" : "Сдать задачу"}
               </div>
-              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder="Ссылка на работу или комментарий" />
+              <FormTextarea value={stageValue} onChange={(e) => setStageValue(e.target.value)} placeholder={stageKey === "invoice" ? "Ссылка на счёт или комментарий" : "Ссылка на работу или комментарий"} />
               {stageError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{stageError}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button onClick={() => { setStageTaskId(null); setStageKey(null); setStageValue(""); setStageError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
