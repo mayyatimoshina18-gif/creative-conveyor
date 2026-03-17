@@ -37,12 +37,17 @@ type Task = {
   sourcesText?: string;
   refsText?: string;
   comment?: string | null;
+  deliveryTarget?: string | null;
   stageMaterials?: {
     thirty?: { value?: string; createdAt?: string } | null;
     sixty?: { value?: string; createdAt?: string } | null;
     final?: { value?: string; createdAt?: string } | null;
     fixesNote?: { value?: string; createdAt?: string } | null;
     invoice?: { value?: string; createdAt?: string } | null;
+    thirtyHistory?: Array<{ value?: string; createdAt?: string }> | null;
+    sixtyHistory?: Array<{ value?: string; createdAt?: string }> | null;
+    finalHistory?: Array<{ value?: string; createdAt?: string }> | null;
+    fixesHistory?: Array<{ value?: string; createdAt?: string }> | null;
   };
   paymentMethod?: string | null;
   paymentRequired?: boolean;
@@ -73,6 +78,11 @@ type ExecutorProfile = {
   approvedByManagerId?: number | null;
   rating?: number | null;
   completedOrders?: number;
+  paymentInvoices?: Array<{ value?: string; createdAt?: string } | string>;
+  reviewAccuracy?: number | null;
+  reviewSpeed?: number | null;
+  reviewAesthetics?: number | null;
+  contractData?: { type?: string; value?: string } | string | null;
 };
 
 const API_BASE = "https://creative-conveyor-backend.onrender.com";
@@ -2507,6 +2517,36 @@ function RenderTextOrLink({ value }: { value?: string | null }) {
     );
   }
   return <span className="whitespace-pre-wrap break-words">{value}</span>;
+}
+
+
+function mergeHistoryItems(
+  history?: Array<{ value?: string; createdAt?: string }> | null,
+  fallback?: { value?: string; createdAt?: string } | null
+) {
+  const normalizedHistory = Array.isArray(history)
+    ? history
+        .filter((item) => item && String(item.value || "").trim())
+        .map((item) => ({
+          value: String(item?.value || "").trim(),
+          createdAt: item?.createdAt || undefined
+        }))
+    : [];
+
+  if (normalizedHistory.length) {
+    return normalizedHistory
+      .sort((a, b) => {
+        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bTime - aTime;
+      });
+  }
+
+  if (fallback?.value) {
+    return [{ value: fallback.value, createdAt: fallback.createdAt }];
+  }
+
+  return [];
 }
 
 function HistoryList({
