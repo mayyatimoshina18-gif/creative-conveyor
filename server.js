@@ -1300,6 +1300,54 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function calculateExecutorStats(executorTelegramId) {
+  const executorId = Number(executorTelegramId || 0);
+  const executorTasks = tasks.filter((task) => Number(task.assignedExecutorId || 0) === executorId);
+
+  const paidStatuses = new Set(["Оплачена", "Завершена", "Закрыта"]);
+  const completedStatuses = new Set([
+    "Оплачена",
+    "Завершена",
+    "Закрыта",
+    "Ожидает счёт",
+    "Счёт загружен",
+    "Ожидает подтверждения оплаты",
+    "Выполнена",
+    "Не оплачена"
+  ]);
+
+  const completedTasks = executorTasks.filter((task) => {
+    const status = String(task?.status || "");
+    return paidStatuses.has(status) || completedStatuses.has(status) || Boolean(task?.timeline?.finalApprovedAt);
+  });
+
+  const completedCount = completedTasks.length;
+
+  const revisionCounts = completedTasks
+    .map((task) => Number(task?.timeline?.revisionCount || 0))
+    .filter((count) => Number.isFinite(count));
+
+  const averageRevisions = revisionCounts.length
+    ? Number((revisionCounts.reduce((sum, count) => sum + count, 0) / revisionCounts.length).toFixed(1))
+    : 0;
+
+  const earnedAmount = completedTasks.reduce((sum, task) => {
+    const status = String(task?.status || "");
+    const isPaid = paidStatuses.has(status) || Boolean(task?.timeline?.executorPaidConfirmedAt);
+    if (!isPaid) return sum;
+
+    const priceNumber = Number(String(task?.price || "").replace(/[^\d.,-]/g, "").replace(",", "."));
+    if (!Number.isFinite(priceNumber)) return sum;
+    return sum + priceNumber;
+  }, 0);
+
+  return {
+    completedTasks: completedCount,
+    averageRevisions,
+    earnedAmount: Number(earnedAmount.toFixed(2))
+  };
+}
+
 function mapTaskForMiniapp(task) {
   return {
     id: task.id,
@@ -3152,7 +3200,18 @@ async function bootstrap() {
 
             await ensureExecutorCodeForProfile(profile);
 
-            sendJson(res, 200, { ok: true, executor: profile });
+            const stats = calculateExecutorStats(profile.telegramId);
+            const executorWithStats = {
+              ...profile,
+              completedOrders: stats.completedTasks,
+              stats: {
+                completedTasks: stats.completedTasks,
+                averageRevisions: stats.averageRevisions,
+                earnedAmount: stats.earnedAmount
+              }
+            };
+
+            sendJson(res, 200, { ok: true, executor: executorWithStats });
           } catch (error) {
             console.error("POST /api/executors/me error:", error);
             sendJson(res, 500, { error: "Failed to load executor" });
