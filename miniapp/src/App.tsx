@@ -904,23 +904,33 @@ export default function App() {
   };
 
 
-  const loadExecutorTasks = async (telegramId: number) => {
+  const loadExecutorTasks = async (telegramId: number, options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent);
     try {
-      setIsLoadingExecutorTasks(true);
-      setExecutorTasksError("");
+      if (!silent) {
+        setIsLoadingExecutorTasks(true);
+        setExecutorTasksError("");
+      }
       const response = await fetch(`${API_BASE}/api/tasks/executor?telegramId=${telegramId}`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Failed to load executor tasks");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "Failed to load executor tasks");
       setExecutorTasks({
-        available: Array.isArray(data.available) ? data.available : [],
-        active: Array.isArray(data.active) ? data.active : [],
-        archived: Array.isArray(data.archived) ? data.archived : []
+        available: Array.isArray((data as any).available) ? (data as any).available : [],
+        active: Array.isArray((data as any).active) ? (data as any).active : [],
+        archived: Array.isArray((data as any).archived) ? (data as any).archived : []
       });
+      if (silent) {
+        setExecutorTasksError("");
+      }
     } catch (error) {
       console.error("Failed to load executor tasks:", error);
-      setExecutorTasksError("Не удалось загрузить задачи исполнителя");
+      if (!silent) {
+        setExecutorTasksError("Не удалось загрузить задачи исполнителя");
+      }
     } finally {
-      setIsLoadingExecutorTasks(false);
+      if (!silent) {
+        setIsLoadingExecutorTasks(false);
+      }
     }
   };
 
@@ -984,7 +994,7 @@ export default function App() {
           body: JSON.stringify({ taskId: task.id, telegramId: executor.telegramId, action })
         });
         if (!response.ok) throw new Error("Failed executor action");
-        await loadExecutorTasks(executor.telegramId);
+        await loadExecutorTasks(executor.telegramId, { silent: true });
         await loadTasks();
       } catch (error) {
         console.error("Failed executor action:", error);
@@ -1031,16 +1041,17 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ taskId: stageTaskId, telegramId: executor.telegramId, stageKey, value: stageValue.trim() })
       });
-      if (!response.ok) throw new Error("Failed stage submit");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "Failed stage submit");
       setStageTaskId(null);
       setStageKey(null);
       setStageValue("");
       setStageError("");
-      await loadExecutorTasks(executor.telegramId);
+      await loadExecutorTasks(executor.telegramId, { silent: true });
       await loadTasks();
     } catch (error) {
       console.error("Failed to submit stage:", error);
-      setStageError("Не удалось отправить материал");
+      setStageError(error instanceof Error ? error.message : "Не удалось отправить материал");
     } finally {
       setStageLoading(false);
     }
@@ -2069,10 +2080,7 @@ export default function App() {
                                         <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Счёт оплачен</button>
                                       ) : null}
                                       {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отложить оплату</button>
-                                          <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Отметить оплату</button>
-                                        </div>
+                                        <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Подтвердить оплату</button>
                                       ) : null}
                                     </div>
                                   ) : activeTopTab === "waiting" ? (
