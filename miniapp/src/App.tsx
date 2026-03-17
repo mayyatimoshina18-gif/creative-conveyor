@@ -80,7 +80,12 @@ type ExecutorProfile = {
   approvedByManagerId?: number | null;
   rating?: number | null;
   completedOrders?: number;
-  paymentInvoices?: Array<{ value?: string; createdAt?: string } | string>;
+  stats?: {
+    completedTasks?: number;
+    averageRevisions?: number;
+    earnedAmount?: number;
+  };
+  paymentInvoices?: Array<{ value?: string; createdAt?: string; taskId?: number; taskTitle?: string; price?: string; paymentMethod?: string | null; managerContact?: string } | string>;
   reviewAccuracy?: number | null;
   reviewSpeed?: number | null;
   reviewAesthetics?: number | null;
@@ -518,7 +523,7 @@ function ExecutorProfileViewModal({
 }) {
   if (!profile) return null;
 
-  const latestInvoices = normalizeInvoiceList(profile.paymentInvoices).slice(-5).reverse();
+  const invoices = normalizeInvoiceList(profile.paymentInvoices).slice().reverse();
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
@@ -538,7 +543,7 @@ function ExecutorProfileViewModal({
             Рейтинг: {typeof profile.rating === "number" ? profile.rating : "—"}
           </div>
           <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">
-            Выполнено задач: {profile.completedOrders || 0}
+            Выполнено задач: {profile.stats?.completedTasks ?? profile.completedOrders ?? 0}
           </div>
         </div>
 
@@ -547,6 +552,8 @@ function ExecutorProfileViewModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="break-words">{profile.telegramContact || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{profile.status || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div>{typeof profile.stats?.averageRevisions === "number" ? profile.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заработано</div><div>{typeof profile.stats?.earnedAmount === "number" ? `${profile.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
@@ -567,18 +574,23 @@ function ExecutorProfileViewModal({
             <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
           </div>
           <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
-            {latestInvoices.length ? (
+            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Все счета</div>
+            {invoices.length ? (
               <div className="space-y-2">
-                {latestInvoices.map((invoice, index) => (
+                {invoices.map((invoice, index) => (
                   <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
+                      {"price" in invoice && invoice.price ? <div className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/60">{invoice.price}</div> : null}
+                    </div>
+                    {"taskTitle" in invoice && invoice.taskTitle ? <div className="mt-2 text-sm font-medium text-white/85">{invoice.taskTitle}</div> : null}
+                    {"taskId" in invoice && invoice.taskId ? <div className="mt-1 text-xs text-white/40">Задача #{invoice.taskId}</div> : null}
                     <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-white/45">Счетов пока нет</div>
+              <div className="text-white/45">Счётов пока нет</div>
             )}
           </div>
         </div>
@@ -590,9 +602,6 @@ function ExecutorProfileViewModal({
     </div>
   );
 }
-
-
-
 
 
 export default function App() {
@@ -630,7 +639,6 @@ export default function App() {
   const [isLoadingExecutorTasks, setIsLoadingExecutorTasks] = useState(false);
   const [executorTasksError, setExecutorTasksError] = useState("");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [selectedExecutorProfile, setSelectedExecutorProfile] = useState<ExecutorProfile | null>(null);
   const [stageTaskId, setStageTaskId] = useState<number | null>(null);
   const [stageKey, setStageKey] = useState<"30" | "60" | "final" | "invoice" | null>(null);
   const [stageValue, setStageValue] = useState("");
@@ -1355,43 +1363,6 @@ export default function App() {
     setIsManagerEditingRegistryExecutor(true);
   };
 
-  const openExecutorProfileById = async (executorId: number) => {
-    try {
-      let profile =
-        approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
-
-      if (!profile) {
-        const response = await fetch(`${API_BASE}/api/executors/approved`, {
-          method: "GET"
-        });
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error((data as any)?.error || "Failed to load approved executors");
-        }
-
-        const list = Array.isArray((data as any)?.executors) ? ((data as any).executors as ExecutorProfile[]) : [];
-        list.sort((a: ExecutorProfile, b: ExecutorProfile) => {
-          const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
-          if (ratingDiff !== 0) return ratingDiff;
-          return Number(b.completedOrders || 0) - Number(a.completedOrders || 0);
-        });
-        setApprovedExecutors(list);
-        profile = list.find((item) => Number(item.telegramId) === Number(executorId)) || null;
-      }
-
-      if (!profile) {
-        setManagerTasksError("Профиль исполнителя пока не найден");
-        return;
-      }
-
-      setSelectedExecutorProfile(profile);
-    } catch (error) {
-      console.error("Failed to open executor profile:", error);
-      setManagerTasksError("Не удалось открыть профиль исполнителя");
-    }
-  };
-
   const handleManagerSaveExecutor = async () => {
     if (!selectedApprovedExecutor?.telegramId) {
       setManagerExecutorMessage("Исполнитель не выбран");
@@ -2078,6 +2049,12 @@ export default function App() {
                   <>
                     {!isExecutorEditing ? (
                       <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Выполнено задач</div><div className="text-2xl font-semibold text-white">{executor?.stats?.completedTasks ?? executor?.completedOrders ?? 0}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Рейтинг</div><div className="text-2xl font-semibold text-white">{typeof executor?.rating === "number" ? executor.rating : "—"}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.averageRevisions === "number" ? executor.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Заработано</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.earnedAmount === "number" ? `${executor.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
+                        </div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
@@ -2251,22 +2228,9 @@ export default function App() {
                                                     </div>
                                                   </div>
                                                   {accepted ? (
-                                                    <div className="flex items-center gap-2">
-                                                      <button
-                                                        onClick={() => void openExecutorProfileById(response.executorId)}
-                                                        className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white"
-                                                      >
-                                                        Профиль
-                                                      </button>
-                                                      <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
-                                                    </div>
+                                                    <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
                                                   ) : (
-                                                    <button
-                                                      onClick={() => void openExecutorProfileById(response.executorId)}
-                                                      className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75"
-                                                    >
-                                                      Профиль
-                                                    </button>
+                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Ожидает</div>
                                                   )}
                                                 </div>
                                               </div>
@@ -2408,22 +2372,10 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                                  <div className="mb-3 text-sm text-white/55">Оцените выполнение тестового задания</div>
-                                  <div className="grid grid-cols-1 gap-3">
-                                    <div>
-                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Соблюдение ТЗ</div>
-                                      <FormInput type="number" min="1" max="5" value={moderationAccuracy} onChange={(e) => setModerationAccuracy(e.target.value)} placeholder="От 1 до 5" />
-                                    </div>
-                                    <div>
-                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Срок</div>
-                                      <FormInput type="number" min="1" max="5" value={moderationSpeed} onChange={(e) => setModerationSpeed(e.target.value)} placeholder="От 1 до 5" />
-                                    </div>
-                                    <div>
-                                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Эстетика</div>
-                                      <FormInput type="number" min="1" max="5" value={moderationAesthetics} onChange={(e) => setModerationAesthetics(e.target.value)} placeholder="От 1 до 5" />
-                                    </div>
-                                  </div>
+                                <div className="grid grid-cols-3 gap-3">
+                                  <FormInput type="number" min="1" max="5" value={moderationAccuracy} onChange={(e) => setModerationAccuracy(e.target.value)} placeholder="ТЗ" />
+                                  <FormInput type="number" min="1" max="5" value={moderationSpeed} onChange={(e) => setModerationSpeed(e.target.value)} placeholder="Сроки" />
+                                  <FormInput type="number" min="1" max="5" value={moderationAesthetics} onChange={(e) => setModerationAesthetics(e.target.value)} placeholder="Эстетика" />
                                 </div>
 
                                 <div className="text-xs text-white/35">
