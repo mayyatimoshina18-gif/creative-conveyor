@@ -3817,18 +3817,66 @@ ${task.title}`,
           const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
           const telegramId = Number(payload.telegramId || 0);
           const value = String(payload.value || "").trim();
-          if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
-          if (task.status !== "Ожидает счёт") return sendJson(res, 400, { error: "Invoice is not expected" });
+
+          if (!task || task.assignedExecutorId !== telegramId) {
+            return sendJson(res, 404, { error: "Task not found" });
+          }
+
+          if (!value) {
+            return sendJson(res, 400, { error: "Invoice value is required" });
+          }
+
+          if (task.status !== "Ожидает счёт") {
+            return sendJson(res, 400, { error: "Invoice is not expected" });
+          }
+
           task.stageMaterials = task.stageMaterials || {};
-          const invoiceField = { type: "text", value, createdAt: new Date().toISOString() };
+          task.timeline = task.timeline || {};
+
+          const invoiceField = {
+            type: "text",
+            value,
+            createdAt: new Date().toISOString(),
+            taskId: task.id,
+            taskTitle: task.title || "",
+            executorId: telegramId,
+            executorName: task.assignedExecutorName || "",
+            managerContact: task.managerContact || "",
+            price: task.price || "",
+            paymentMethod: task.stageMaterials?.paymentMeta?.method || null
+          };
+
           task.stageMaterials.invoice = invoiceField;
           task.status = "Счёт загружен";
-          task.timeline.invoiceSubmittedAt = new Date().toISOString();
+          task.timeline.invoiceSubmittedAt = invoiceField.createdAt;
 
           const executor = executors.get(task.assignedExecutorId);
           if (executor) {
-            if (!Array.isArray(executor.paymentInvoices)) executor.paymentInvoices = [];
-            executor.paymentInvoices.push({ value, createdAt: invoiceField.createdAt });
+            if (!Array.isArray(executor.paymentInvoices)) {
+              executor.paymentInvoices = [];
+            }
+
+            const existingInvoiceIndex = executor.paymentInvoices.findIndex((item) => Number(item?.taskId || 0) === Number(task.id));
+
+            const executorInvoiceItem = {
+              value,
+              createdAt: invoiceField.createdAt,
+              taskId: task.id,
+              taskTitle: task.title || "",
+              price: task.price || "",
+              paymentMethod: task.stageMaterials?.paymentMeta?.method || executor.paymentMethod || null,
+              managerContact: task.managerContact || ""
+            };
+
+            if (existingInvoiceIndex >= 0) {
+              executor.paymentInvoices[existingInvoiceIndex] = {
+                ...executor.paymentInvoices[existingInvoiceIndex],
+                ...executorInvoiceItem
+              };
+            } else {
+              executor.paymentInvoices.push(executorInvoiceItem);
+            }
+
             executor.updatedAt = new Date().toISOString();
             await saveExecutorToDb(executor);
             executors.set(executor.telegramId, executor);
