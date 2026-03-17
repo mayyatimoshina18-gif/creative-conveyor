@@ -326,21 +326,30 @@ function getPipelineSteps(task: Task) {
 
 function PipelineView({ task, compact = false }: { task: Task; compact?: boolean }) {
   const steps = getPipelineSteps(task);
+  const visibleSteps = compact
+    ? (() => {
+        const activeStep = steps.find((step) => step.state === "active");
+        if (activeStep) return [activeStep];
+        if ((task.status || "") === "Оплачена") return [steps[steps.length - 1]];
+        const lastDoneStep = [...steps].reverse().find((step) => step.state === "done");
+        return [lastDoneStep || steps[0]];
+      })()
+    : steps;
 
   return (
     <div className={cn("rounded-[24px] border border-white/8 bg-black/20", compact ? "p-3" : "p-4")}>
-      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">Pipeline задачи</div>
+      <div className="mb-3 text-xs uppercase tracking-[0.16em] text-white/35">{compact ? "Текущий этап" : "Pipeline задачи"}</div>
       <div className="space-y-3">
-        {steps.map((step, index) => {
+        {visibleSteps.map((step, index) => {
           const active = step.state === "active";
           const done = step.state === "done";
           return (
             <div key={step.key} className="relative flex gap-3">
               <div className="flex w-5 flex-col items-center">
                 {done ? <CheckCircle2 className="h-5 w-5 text-[#56FFEF]" /> : active ? <LoaderCircle className="h-5 w-5 animate-spin text-[#56FFEF]" /> : <Circle className="h-5 w-5 text-white/25" />}
-                {index !== steps.length - 1 ? <div className={cn("mt-1 w-px flex-1", done || active ? "bg-[#56FFEF]/40" : "bg-white/10")} /> : null}
+                {!compact && index !== visibleSteps.length - 1 ? <div className={cn("mt-1 w-px flex-1", done || active ? "bg-[#56FFEF]/40" : "bg-white/10")} /> : null}
               </div>
-              <div className="min-w-0 flex-1 pb-3">
+              <div className={cn("min-w-0 flex-1", compact ? "" : "pb-3")}>
                 <div className="flex items-center justify-between gap-3">
                   <div className={cn("text-sm font-medium", active ? "text-[#56FFEF]" : "text-white")}>{step.title}</div>
                   <div className={cn("text-[11px] uppercase tracking-[0.12em]", done ? "text-[#56FFEF]" : active ? "text-[#56FFEF]" : "text-white/35")}>
@@ -352,7 +361,6 @@ function PipelineView({ task, compact = false }: { task: Task; compact?: boolean
             </div>
           );
         })}
-
       </div>
     </div>
   );
@@ -1912,24 +1920,33 @@ export default function App() {
                               {activeTopTab === "waiting" ? (
                                 (() => {
                                   const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
-                                  const acceptedResponses = ((managerTask as any).responses || []).filter((item: any) => item.decision === "Принял");
-                                  return acceptedResponses.length ? (
+                                  const taskResponses = Array.isArray((managerTask as any).responses) ? (managerTask as any).responses : [];
+                                  return taskResponses.length ? (
                                     <div className="mt-4 space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
-                                      <div className="text-sm text-white/55">Откликнулись исполнители</div>
-                                      {acceptedResponses.map((response: any) => {
+                                      <div className="text-sm text-white/55">Отклики исполнителей</div>
+                                      {taskResponses.map((response: any) => {
                                         const rank = getApprovedExecutorRank(response.executorId);
+                                        const accepted = response?.decision === "Принял";
+                                        const declined = response?.decision === "Отклонил";
                                         return (
                                           <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
                                             <div className="flex items-start justify-between gap-3">
                                               <div>
-                                                <div className="text-sm font-medium text-white">{response.executorName}</div>
-                                                <div className="mt-1 text-xs text-white/45">{response.executorContact}</div>
+                                                <div className="text-sm font-medium text-white">{response.executorName || "Без имени"}</div>
+                                                <div className="mt-1 text-xs text-white/45">{response.executorContact || "Контакт не указан"}</div>
                                                 <div className="mt-2 flex flex-wrap gap-2">
+                                                  <div className={cn("rounded-full px-2.5 py-1 text-[11px]", accepted ? "border border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : declined ? "border border-white/10 bg-white/5 text-white/70" : "border border-white/10 bg-white/5 text-white/70")}>
+                                                    {response?.decision || "Без решения"}
+                                                  </div>
                                                   {rank ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Место в рейтинге #{rank}</div> : null}
                                                   {response.rating != null ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">Рейтинг {response.rating}</div> : null}
                                                 </div>
                                               </div>
-                                              <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                              {accepted ? (
+                                                <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                              ) : (
+                                                <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Без назначения</div>
+                                              )}
                                             </div>
                                           </div>
                                         );
