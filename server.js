@@ -1211,7 +1211,10 @@ function mapTaskForMiniapp(task) {
     sourcesText: task.sources?.type === "text" ? task.sources.value : task.sources?.caption || "",
     refsText: task.refs_data?.type === "text" ? task.refs_data.value : task.refs_data?.caption || "",
     deliveryTarget: task.deliveryTarget || "",
-    stageMaterials: task.stageMaterials || {}
+    stageMaterials: task.stageMaterials || {},
+    paymentMethod: task.stageMaterials?.paymentMeta?.method || null,
+    paymentRequired: Boolean(task.stageMaterials?.paymentMeta?.required),
+    revisionCount: Number(task.timeline?.revisionCount || 0)
   };
 }
 
@@ -1243,14 +1246,17 @@ function getMiniappTasksGrouped() {
       status === "60%" ||
       status === "На проверке" ||
       status === "Правки" ||
-      status === "Не оплачена"
+      status === "Ожидает счёт" ||
+      status === "Счёт загружен" ||
+      status === "Выполнена" ||
+      status === "Не оплачена" ||
+      status === "Ожидает подтверждения оплаты"
     ) {
       grouped.active.push(mappedTask);
       continue;
     }
 
     if (
-      status === "Выполнена" ||
       status === "Оплачена"
     ) {
       grouped.archived.push(mappedTask);
@@ -3702,9 +3708,20 @@ ${task.title}`,
           if (!task || task.assignedExecutorId !== telegramId) return sendJson(res, 404, { error: "Task not found" });
           if (task.status !== "Ожидает счёт") return sendJson(res, 400, { error: "Invoice is not expected" });
           task.stageMaterials = task.stageMaterials || {};
-          task.stageMaterials.invoice = { type: "text", value, createdAt: new Date().toISOString() };
+          const invoiceField = { type: "text", value, createdAt: new Date().toISOString() };
+          task.stageMaterials.invoice = invoiceField;
           task.status = "Счёт загружен";
           task.timeline.invoiceSubmittedAt = new Date().toISOString();
+
+          const executor = executors.get(task.assignedExecutorId);
+          if (executor) {
+            if (!Array.isArray(executor.paymentInvoices)) executor.paymentInvoices = [];
+            executor.paymentInvoices.push({ value, createdAt: invoiceField.createdAt });
+            executor.updatedAt = new Date().toISOString();
+            await saveExecutorToDb(executor);
+            executors.set(executor.telegramId, executor);
+          }
+
           await saveTaskToDb(task);
 
           const managerChatId = findManagerChatIdByContact(task.managerContact) || task.managerId || null;
@@ -3776,10 +3793,13 @@ ${task.title}`,
           if (payload.action === "approve") {
             const executor = executors.get(task.assignedExecutorId);
             task.timeline.approvedAt = new Date().toISOString();
+            task.stageMaterials = task.stageMaterials || {};
+            task.stageMaterials.paymentMeta = {
+              required: executor && ["ИП", "Самозанятость"].includes(String(executor.paymentMethod || "")),
+              method: executor?.paymentMethod || null
+            };
             if (executor && ["ИП", "Самозанятость"].includes(String(executor.paymentMethod || ""))) {
               task.status = "Ожидает счёт";
-              task.stageMaterials = task.stageMaterials || {};
-              task.stageMaterials.paymentMeta = { required: true, method: executor.paymentMethod };
             } else {
               task.status = "Выполнена";
               task.timeline.unpaidAt = new Date().toISOString();
@@ -3828,11 +3848,7 @@ ${task.title}`,
             task.status = "Не оплачена";
             task.timeline.unpaidAt = new Date().toISOString();
           } else if (payload.action === "paid") {
-            if (task.stageMaterials?.paymentMeta?.required) {
-              task.status = "Ожидает подтверждения оплаты";
-            } else {
-              task.status = "Оплачена";
-            }
+            task.status = "Ожидает подтверждения оплаты";
             task.timeline.paidAt = new Date().toISOString();
           } else {
             return sendJson(res, 400, { error: "Unknown action" });
