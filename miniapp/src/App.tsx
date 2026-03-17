@@ -389,10 +389,10 @@ function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => 
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
-          <HistoryList title="История правок" items={task.stageMaterials?.fixesHistory || (task.stageMaterials?.fixesNote ? [task.stageMaterials.fixesNote] : [])} />
-          <HistoryList title="История сдач 30%" items={task.stageMaterials?.thirtyHistory || (task.stageMaterials?.thirty ? [task.stageMaterials.thirty] : [])} />
-          <HistoryList title="История сдач 60%" items={task.stageMaterials?.sixtyHistory || (task.stageMaterials?.sixty ? [task.stageMaterials.sixty] : [])} />
-          <HistoryList title="История финальных сдач" items={task.stageMaterials?.finalHistory || (task.stageMaterials?.final ? [task.stageMaterials.final] : [])} />
+          <HistoryList title="История правок" items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)} />
+          <HistoryList title="История сдач 30%" items={mergeHistoryItems(task.stageMaterials?.thirtyHistory, task.stageMaterials?.thirty)} />
+          <HistoryList title="История сдач 60%" items={mergeHistoryItems(task.stageMaterials?.sixtyHistory, task.stageMaterials?.sixty)} />
+          <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
         </div>
 
         {task.status === "На проверке" ? (
@@ -999,7 +999,17 @@ export default function App() {
         throw new Error((data as any)?.error || "Failed to load manager tasks");
       }
 
-      setManagerTasks(Array.isArray((data as any)?.tasks) ? (data as any).tasks : []);
+      let tasks = Array.isArray((data as any)?.tasks) ? (data as any).tasks : [];
+
+      if (!tasks.length) {
+        const fallbackResponse = await fetch(`${API_BASE}/api/tasks/manager`, { method: "GET" });
+        const fallbackData = await fallbackResponse.json().catch(() => ({}));
+        if (fallbackResponse.ok) {
+          tasks = Array.isArray((fallbackData as any)?.tasks) ? (fallbackData as any).tasks : [];
+        }
+      }
+
+      setManagerTasks(tasks);
     } catch (error) {
       console.error("Failed to load manager tasks:", error);
       setManagerTasksError("Не удалось загрузить отклики исполнителей");
