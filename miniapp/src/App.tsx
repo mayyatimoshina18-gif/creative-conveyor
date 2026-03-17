@@ -121,7 +121,7 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-left text-lg font-medium text-white transition hover:bg-white/10 active:scale-[0.99]"
+      className="w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-left text-lg font-medium text-white transition hover:bg-white/10 active:scale-[0.99]"
     >
       <div className="flex items-center justify-between">
         <span>{label}</span>
@@ -141,7 +141,7 @@ function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; fo
       exit={{ opacity: 0, y: -12 }}
       transition={{ duration: 0.18 }}
       onClick={onOpen}
-      className="w-full rounded-[28px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
+      className="w-full rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-left shadow-[0_10px_40px_rgba(0,0,0,0.28)] transition hover:bg-white/[0.06]"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
@@ -182,7 +182,7 @@ function FormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+      className="w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
     />
   );
 }
@@ -191,7 +191,7 @@ function FormTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) 
   return (
     <textarea
       {...props}
-      className="min-h-[110px] w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
+      className="min-h-[110px] w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-base text-white outline-none placeholder:text-white/25"
     />
   );
 }
@@ -372,18 +372,20 @@ function TaskDetailModal({
   onClose,
   onManagerApprove,
   onManagerOpenFixes,
-  onManagerMarkPaid
+  onManagerMarkPaid,
+  onOpenAllFixes
 }: {
   task: Task | null;
   onClose: () => void;
   onManagerApprove?: (taskId: number) => void;
   onManagerOpenFixes?: (taskId: number) => void;
   onManagerMarkPaid?: (taskId: number) => void;
+  onOpenAllFixes?: (task: Task) => void;
 }) {
   if (!task) return null;
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3">
-      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[32px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{task.id}</div>
@@ -454,7 +456,10 @@ function TaskDetailModal({
         ) : null}
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
-          <HistoryList title="История правок" items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)} />
+          <FixesPreviewCard
+            items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)}
+            onOpenAll={() => onOpenAllFixes?.(task)}
+          />
           <HistoryList title="История сдач 30%" items={mergeHistoryItems(task.stageMaterials?.thirtyHistory, task.stageMaterials?.thirty)} />
           <HistoryList title="История сдач 60%" items={mergeHistoryItems(task.stageMaterials?.sixtyHistory, task.stageMaterials?.sixty)} />
           <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
@@ -514,6 +519,8 @@ export default function App() {
   const [fixesValue, setFixesValue] = useState("");
   const [fixesError, setFixesError] = useState("");
   const [fixesLoading, setFixesLoading] = useState(false);
+  const [fixesClientFault, setFixesClientFault] = useState(false);
+  const [allFixesTask, setAllFixesTask] = useState<Task | null>(null);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -594,7 +601,30 @@ export default function App() {
     }
   }, []);
 
-  const visibleTasks = useMemo(() => tasksData[activeTopTab] || [], [tasksData, activeTopTab]);
+  const visibleTasks = useMemo(() => {
+    const items = [...(tasksData[activeTopTab] || [])];
+    const getTaskActivityTime = (task: Task) => {
+      const candidates = [
+        task.createdAt,
+        task.publishedAt,
+        task.stageMaterials?.thirty?.createdAt,
+        task.stageMaterials?.sixty?.createdAt,
+        task.stageMaterials?.final?.createdAt,
+        task.stageMaterials?.fixesNote?.createdAt,
+        task.stageMaterials?.invoice?.createdAt,
+        ...(task.stageMaterials?.thirtyHistory || []).map((item) => item?.createdAt),
+        ...(task.stageMaterials?.sixtyHistory || []).map((item) => item?.createdAt),
+        ...(task.stageMaterials?.finalHistory || []).map((item) => item?.createdAt),
+        ...(task.stageMaterials?.fixesHistory || []).map((item) => item?.createdAt),
+        ...((Array.isArray((task as any)?.responses) ? (task as any).responses : []).map((item: any) => item?.createdAt))
+      ].filter(Boolean) as string[];
+      return candidates.reduce((max, value) => {
+        const time = value ? new Date(value).getTime() : 0;
+        return Number.isFinite(time) && time > max ? time : max;
+      }, 0);
+    };
+    return items.sort((a, b) => getTaskActivityTime(b) - getTaskActivityTime(a));
+  }, [tasksData, activeTopTab]);
 
   const getApprovedExecutorRank = (telegramId?: number) => {
     if (!telegramId) return null;
@@ -1582,7 +1612,7 @@ export default function App() {
 
         <FormInput value={executorContact} onChange={(e) => setExecutorContact(e.target.value)} placeholder="Контакт для связи" />
 
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-3 text-sm text-white/55">Специализации</div>
           <div className="flex flex-wrap gap-2">
             {SPECIALIZATION_OPTIONS.map((item) => {
@@ -1610,7 +1640,7 @@ export default function App() {
           placeholder="Ссылка на портфолио (необязательно)"
         />
 
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-3 text-sm text-white/55">Способ выплаты</div>
           <div className="flex flex-wrap gap-2">
             {PAYMENT_OPTIONS.map((item) => {
@@ -1632,7 +1662,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-2 text-sm text-white/55">{paymentPrompt.label}</div>
           {paymentPrompt.helper ? <div className="mb-3 text-xs text-white/35">{paymentPrompt.helper}</div> : null}
           <FormTextarea
@@ -1642,7 +1672,7 @@ export default function App() {
           />
         </div>
 
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-3 text-sm text-white/55">Недоступные дни (необязательно)</div>
           <div className="flex flex-wrap gap-2">
             {DAY_OPTIONS.map((item) => {
@@ -1681,7 +1711,7 @@ export default function App() {
         <button
           onClick={onSubmit}
           disabled={isExecutorSubmitting}
-          className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+          className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
         >
           {isExecutorSubmitting ? "Сохраняю..." : submitLabel}
         </button>
@@ -1726,8 +1756,8 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                <button onClick={() => { resetExecutorForm(); setScreen("executorForm"); }} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Заполнить анкету</button>
-                <button onClick={() => { setExecutorError(""); setExecutorInfo(""); setExecutorCode(""); setScreen("executorCodeLogin"); }} className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10">У меня уже есть ID исполнителя</button>
+                <button onClick={() => { resetExecutorForm(); setScreen("executorForm"); }} className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Заполнить анкету</button>
+                <button onClick={() => { setExecutorError(""); setExecutorInfo(""); setExecutorCode(""); setScreen("executorCodeLogin"); }} className="w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10">У меня уже есть ID исполнителя</button>
               </div>
             </motion.div>
           )}
@@ -1748,7 +1778,7 @@ export default function App() {
               <div className="space-y-3">
                 <FormInput value={executorCode} onChange={(e) => setExecutorCode(e.target.value.toUpperCase())} placeholder="Например: EX-7K3D9A" />
                 {executorError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorError}</div> : null}
-                <button onClick={() => void handleExecutorCodeLogin()} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Войти</button>
+                <button onClick={() => void handleExecutorCodeLogin()} className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95">Войти</button>
               </div>
             </motion.div>
           )}
@@ -1762,8 +1792,8 @@ export default function App() {
                 <p className="mt-3 text-sm text-white/45">Менеджер проверяет твою анкету. После подтверждения ты получишь доступ к задачам.</p>
               </div>
               <div className="space-y-3">
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-base text-white">{executor?.executorCode || "—"}</div></div>
-                <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-base text-white">{executor?.telegramContact || "—"}</div></div>
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-base text-white">{executor?.executorCode || "—"}</div></div>
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5"><div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-base text-white">{executor?.telegramContact || "—"}</div></div>
               </div>
             </motion.div>
           )}
@@ -1803,14 +1833,14 @@ export default function App() {
                 {executorBottomTab === "tasks" ? (
                   <>
                     {isLoadingExecutorTasks ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : executorTasksError ? (
                       <div className="space-y-3">
-                        <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorTasksError}</div>
+                        <div className="rounded-[24px] border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorTasksError}</div>
                         <button onClick={() => executor?.telegramId ? void loadExecutorTasks(Number(executor.telegramId)) : null} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button>
                       </div>
                     ) : executorVisibleTasks.length === 0 ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
                       <div className="space-y-3">
                         {executorVisibleTasks.map((task) => (
@@ -1858,17 +1888,17 @@ export default function App() {
                   <>
                     {!isExecutorEditing ? (
                       <div className="space-y-3">
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
-                        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Статус</div><div className="text-white">{executor?.status || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Специализации</div><div className="text-white">{executor?.specializations?.length ? executor.specializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Подтверждённые специализации</div><div className="text-white">{executor?.verifiedSpecializations?.length ? executor.verifiedSpecializations.join(", ") : "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Портфолио</div><div className="text-white break-words">{executor?.portfolio || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Способ выплаты</div><div className="text-white">{executor?.paymentMethod || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
                         {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
                       </div>
                     ) : (
@@ -1913,7 +1943,7 @@ export default function App() {
               <div className="space-y-3">
                 <FormInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Пароль" />
                 {passwordError ? <div className="px-1 text-sm text-rose-300">{passwordError}</div> : null}
-                <button onClick={handleManagerLogin} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]">Войти</button>
+                <button onClick={handleManagerLogin} className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 active:scale-[0.99]">Войти</button>
               </div>
             </motion.div>
           )}
@@ -1972,11 +2002,11 @@ export default function App() {
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
                     {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-3 text-sm text-rose-200">{managerTasksError}</div> : null}
                     {isLoadingTasks ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
                     ) : tasksError ? (
-                      <div className="space-y-3"><div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
+                      <div className="space-y-3"><div className="rounded-[24px] border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{tasksError}</div><button onClick={() => { void loadTasks(); void loadManagerTasks(); }} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Повторить загрузку</button></div>
                     ) : visibleTasks.length === 0 ? (
-                      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
+                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Здесь пока нет задач.</div>
                     ) : (
                       <div className="space-y-3">
                         <AnimatePresence mode="popLayout">
@@ -1987,18 +2017,41 @@ export default function App() {
                                 onOpen={() => setSelectedTask(task)}
                                 footer={
                                   activeTopTab === "active" ? (
-                                    <PipelineView task={task} compact />
+                                    <div className="space-y-3 rounded-[24px] border border-white/8 bg-black/20 p-4">
+                                      <PipelineView task={task} compact />
+                                      {task.status === "На проверке" ? (
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesClientFault(false); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
+                                          <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять</button>
+                                        </div>
+                                      ) : null}
+                                      {task.status === "Счёт загружен" ? (
+                                        <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Счёт оплачен</button>
+                                      ) : null}
+                                      {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
+                                          <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Оплачена</button>
+                                        </div>
+                                      ) : null}
+                                    </div>
                                   ) : activeTopTab === "waiting" ? (
                                     (() => {
                                       const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
-                                      const taskResponses = Array.isArray((managerTask as any).responses) ? (managerTask as any).responses : [];
+                                      const taskResponses = [...(Array.isArray((managerTask as any).responses) ? (managerTask as any).responses : [])]
+                                        .sort((a: any, b: any) => {
+                                          const ratingDiff = Number(b?.rating || 0) - Number(a?.rating || 0);
+                                          if (ratingDiff !== 0) return ratingDiff;
+                                          const aTime = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+                                          const bTime = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+                                          return bTime - aTime;
+                                        });
                                       return taskResponses.length ? (
                                         <div className="space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
                                           <div className="text-sm text-white/55">Отклики исполнителей</div>
                                           {taskResponses.map((response: any) => {
                                             const rank = getApprovedExecutorRank(response.executorId);
                                             const accepted = response?.decision === "Принял";
-                                            const declined = response?.decision === "Отклонил";
                                             return (
                                               <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
                                                 <div className="flex items-start justify-between gap-3">
@@ -2006,17 +2059,14 @@ export default function App() {
                                                     <div className="text-sm font-medium text-white">{response.executorName || "Без имени"}</div>
                                                     <div className="mt-1 text-xs text-white/45">{response.executorContact || "Контакт не указан"}</div>
                                                     <div className="mt-2 flex flex-wrap gap-2">
-                                                      <div className={cn("rounded-full px-2.5 py-1 text-[11px]", accepted ? "border border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : declined ? "border border-white/10 bg-white/5 text-white/70" : "border border-white/10 bg-white/5 text-white/70")}>
-                                                        {response?.decision || "Без решения"}
-                                                      </div>
-                                                      {rank ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Место в рейтинге #{rank}</div> : null}
-                                                      {response.rating != null ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">Рейтинг {response.rating}</div> : null}
+                                                      {response.rating != null ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Рейтинг {response.rating}</div> : null}
+                                                      {rank ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">#{rank} в рейтинге</div> : null}
                                                     </div>
                                                   </div>
                                                   {accepted ? (
                                                     <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
                                                   ) : (
-                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Без назначения</div>
+                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Ожидает</div>
                                                   )}
                                                 </div>
                                               </div>
@@ -2028,25 +2078,6 @@ export default function App() {
                                   ) : null
                                 }
                               />
-                              {activeTopTab === "active" ? (
-                                <>
-                                  {task.status === "На проверке" ? (
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять</button>
-                                      <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesClientFault(false); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
-                                    </div>
-                                  ) : null}
-                                  {task.status === "Счёт загружен" ? (
-                                    <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Счёт оплачен</button>
-                                  ) : null}
-                                  {["Выполнена", "Не оплачена"].includes(String(task.status || "")) ? (
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <button onClick={() => void handleManagerStageAction(task.id, "unpaid")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Не оплачена</button>
-                                      <button onClick={() => void handleManagerStageAction(task.id, "paid")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Оплачена</button>
-                                    </div>
-                                  ) : null}
-                                </>
-                              ) : null}
                             </div>
                           ))}
                         </AnimatePresence>
@@ -2058,12 +2089,12 @@ export default function App() {
                     {managerExecutorsTopTab === "pending" ? (
                       <>
                         {isLoadingPendingExecutors ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
                             Загружаю заявки исполнителей...
                           </div>
                         ) : pendingExecutorsError ? (
                           <div className="space-y-3">
-                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                            <div className="rounded-[24px] border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
                               {pendingExecutorsError}
                             </div>
                             <button
@@ -2074,7 +2105,7 @@ export default function App() {
                             </button>
                           </div>
                         ) : !pendingExecutors.length ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
                             Сейчас нет новых анкет на модерации.
                           </div>
                         ) : (
@@ -2087,7 +2118,7 @@ export default function App() {
                                     key={String(profile.telegramId)}
                                     onClick={() => openPendingExecutor(profile)}
                                     className={cn(
-                                      "w-full rounded-[28px] border p-4 text-left transition",
+                                      "w-full rounded-[24px] border p-4 text-left transition",
                                       active
                                         ? "border-[#56FFEF]/30 bg-[#56FFEF]/10"
                                         : "border-white/10 bg-white/[0.04] hover:bg-white/[0.06]"
@@ -2108,7 +2139,7 @@ export default function App() {
                             </div>
 
                             {selectedPendingExecutor ? (
-                              <div className="space-y-3 rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                                 <div>
                                   <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
                                     Карточка исполнителя
@@ -2197,14 +2228,14 @@ export default function App() {
                                   <button
                                     onClick={() => void handleModerateExecutor("reject")}
                                     disabled={isModeratingExecutor}
-                                    className="w-full rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10 disabled:opacity-60"
+                                    className="w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10 disabled:opacity-60"
                                   >
                                     Отклонить
                                   </button>
                                   <button
                                     onClick={() => void handleModerateExecutor("approve")}
                                     disabled={isModeratingExecutor}
-                                    className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                                    className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
                                   >
                                     {isModeratingExecutor ? "Сохраняю..." : "Подтвердить"}
                                   </button>
@@ -2217,12 +2248,12 @@ export default function App() {
                     ) : (
                       <>
                         {isLoadingApprovedExecutors ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">
                             Загружаю реестр исполнителей...
                           </div>
                         ) : approvedExecutorsError ? (
                           <div className="space-y-3">
-                            <div className="rounded-3xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                            <div className="rounded-[24px] border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
                               {approvedExecutorsError}
                             </div>
                             <button
@@ -2233,13 +2264,13 @@ export default function App() {
                             </button>
                           </div>
                         ) : !approvedExecutors.length ? (
-                          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">
                             В реестре пока нет подтверждённых исполнителей.
                           </div>
                         ) : (
                           <div className="space-y-3">
                             {isManagerEditingRegistryExecutor ? (
-                              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                                 <div className="mb-4 flex items-start justify-between gap-3">
                                   <div>
                                     <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Редактирование исполнителя</div>
@@ -2412,7 +2443,7 @@ export default function App() {
                                   <button
                                     onClick={() => void handleManagerSaveExecutor()}
                                     disabled={isSavingManagerExecutor}
-                                    className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
+                                    className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60"
                                   >
                                     {isSavingManagerExecutor ? "Сохраняю..." : "Сохранить карточку"}
                                   </button>
@@ -2420,7 +2451,7 @@ export default function App() {
                               </div>
                             ) : null}
                             {approvedExecutors.map((profile, index) => (
-                              <div key={`${profile.telegramId}-${index}`} className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4">
+                              <div key={`${profile.telegramId}-${index}`} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                                 <div className="mb-3 flex items-start justify-between gap-3">
                                   <div>
                                     <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
@@ -2523,7 +2554,7 @@ export default function App() {
                 ) : activeBottomTab === "create" ? (
                   <div className="space-y-3">
                     <FormInput value={createTitle} onChange={(e) => setCreateTitle(e.target.value)} placeholder="Название задачи" />
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-3 text-sm text-white/55">Категории</div><div className="flex flex-wrap gap-2">{SPECIALIZATION_OPTIONS.map((item) => { const active = createCategories.includes(item); return <button type="button" key={item} onClick={() => toggleCategory(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>{item}</button>; })}</div></div>
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-3 text-sm text-white/55">Категории</div><div className="flex flex-wrap gap-2">{SPECIALIZATION_OPTIONS.map((item) => { const active = createCategories.includes(item); return <button type="button" key={item} onClick={() => toggleCategory(item)} className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}>{item}</button>; })}</div></div>
                     <FormInput type="date" value={createDeadlineDate} onChange={(e) => setCreateDeadlineDate(e.target.value)} placeholder="Дата дедлайна" />
                     <FormInput type="time" value={createDeadlineTime} onChange={(e) => setCreateDeadlineTime(e.target.value)} placeholder="Время дедлайна" />
                     <FormInput value={createPrice} onChange={(e) => setCreatePrice(e.target.value)} placeholder="Стоимость" />
@@ -2534,7 +2565,7 @@ export default function App() {
                     <FormInput value={createComment} onChange={(e) => setCreateComment(e.target.value)} placeholder="Комментарий (необязательно)" />
                     {createError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{createError}</div> : null}
                     {createSuccess ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{createSuccess}</div> : null}
-                    <button onClick={handleCreateTask} disabled={isCreating} className="w-full rounded-3xl bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">{isCreating ? "Создаю..." : "Создать задачу"}</button>
+                    <button onClick={handleCreateTask} disabled={isCreating} className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">{isCreating ? "Создаю..." : "Создать задачу"}</button>
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
@@ -2557,11 +2588,12 @@ export default function App() {
             setSelectedTask(null);
           }}
           onManagerMarkPaid={(taskId) => void handleManagerStageAction(taskId, "paid")}
+          onOpenAllFixes={(task) => setAllFixesTask(task)}
         />
 
         {fixesTaskId ? (
           <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/70 p-3">
-            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+            <div className="w-full max-w-[430px] rounded-[26px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
               <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
               <label className="mt-3 flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
@@ -2582,9 +2614,29 @@ export default function App() {
           </div>
         ) : null}
 
+        {allFixesTask ? (
+          <div className="fixed inset-0 z-[85] flex items-end justify-center bg-black/70 p-3">
+            <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Задача #{allFixesTask.id}</div>
+                  <div className="text-xl font-semibold tracking-[-0.04em] text-white">Все правки</div>
+                </div>
+                <button onClick={() => setAllFixesTask(null)} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <HistoryList title="История правок" items={mergeHistoryItems(allFixesTask.stageMaterials?.fixesHistory, allFixesTask.stageMaterials?.fixesNote)} />
+              <div className="mt-4">
+                <button onClick={() => setAllFixesTask(null)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {stageTaskId && stageKey ? (
           <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
-            <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
+            <div className="w-full max-w-[430px] rounded-[26px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-4 text-xl font-semibold text-white">
                 {stageKey === "30" ? "Загрузить 30%" : stageKey === "60" ? "Загрузить 60%" : "Сдать задачу"}
               </div>
@@ -2657,6 +2709,39 @@ function mergeHistoryItems(
   }
 
   return [];
+}
+
+function FixesPreviewCard({
+  items,
+  onOpenAll
+}: {
+  items?: Array<{ value?: string; createdAt?: string }> | null;
+  onOpenAll?: () => void;
+}) {
+  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
+  const visible = normalized.slice(0, 3);
+  return (
+    <div className="rounded-2xl bg-black/20 p-3">
+      <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">История правок</div>
+      {!visible.length ? (
+        <div className="text-white/45">—</div>
+      ) : (
+        <div className="space-y-3">
+          {visible.map((item, index) => (
+            <div key={`fix-preview-${index}`} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+              <div className="mb-1 text-xs text-white/35">{formatDateLabel(item.createdAt)}</div>
+              <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
+            </div>
+          ))}
+          {normalized.length > 3 ? (
+            <button onClick={onOpenAll} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-xs text-[#56FFEF]">
+              Посмотреть все правки
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function HistoryList({
