@@ -2581,15 +2581,15 @@ export default function App() {
         <TaskDetailModal
           task={selectedTask}
           onClose={() => setSelectedTask(null)}
-          onManagerApprove={(taskId) => void handleManagerStageAction(taskId, "approve")}
-          onManagerOpenFixes={(taskId) => {
+          onManagerApprove={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "approve")) : undefined}
+          onManagerOpenFixes={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => {
             setFixesTaskId(taskId);
             setFixesValue("");
             setFixesClientFault(false);
             setFixesError("");
             setSelectedTask(null);
-          }}
-          onManagerMarkPaid={(taskId) => void handleManagerStageAction(taskId, "paid")}
+          }) : undefined}
+          onManagerMarkPaid={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "paid")) : undefined}
           onOpenAllFixes={(task) => setAllFixesTask(task)}
         />
 
