@@ -131,7 +131,7 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
   );
 }
 
-function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; footer?: React.ReactNode }) {
   return (
     <motion.button
       type="button"
@@ -173,6 +173,7 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
       </div>
 
       <div className="mt-3 text-sm text-white/55">Менеджер: {task.manager || "—"}</div>
+      {footer ? <div className="mt-3" onClick={(event) => event.stopPropagation()}>{footer}</div> : null}
     </motion.button>
   );
 }
@@ -366,7 +367,19 @@ function PipelineView({ task, compact = false }: { task: Task; compact?: boolean
   );
 }
 
-function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => void }) {
+function TaskDetailModal({
+  task,
+  onClose,
+  onManagerApprove,
+  onManagerOpenFixes,
+  onManagerMarkPaid
+}: {
+  task: Task | null;
+  onClose: () => void;
+  onManagerApprove?: (taskId: number) => void;
+  onManagerOpenFixes?: (taskId: number) => void;
+  onManagerMarkPaid?: (taskId: number) => void;
+}) {
   if (!task) return null;
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3">
@@ -413,12 +426,44 @@ function TaskDetailModal({ task, onClose }: { task: Task | null; onClose: () => 
           <HistoryList title="История финальных сдач" items={mergeHistoryItems(task.stageMaterials?.finalHistory, task.stageMaterials?.final)} />
         </div>
 
-        {task.status === "На проверке" ? (
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
-            <div className="text-sm text-white/45 self-center text-right">Используй кнопки под карточкой задачи</div>
-          </div>
-        ) : null}
+        <div className="mt-4 space-y-2">
+          {task.status === "На проверке" ? (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  onClose();
+                  onManagerOpenFixes?.(task.id);
+                }}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
+              >
+                На правки
+              </button>
+              <button
+                onClick={() => {
+                  onManagerApprove?.(task.id);
+                  onClose();
+                }}
+                className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+              >
+                Принять
+              </button>
+            </div>
+          ) : null}
+
+          {task.status === "Счёт загружен" ? (
+            <button
+              onClick={() => {
+                onManagerMarkPaid?.(task.id);
+                onClose();
+              }}
+              className="w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+            >
+              Счёт оплачен
+            </button>
+          ) : null}
+
+          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+        </div>
 
       </div>
     </div>
@@ -559,7 +604,7 @@ export default function App() {
     return index === -1 ? null : index + 1;
   };
   const executorVisibleTasks = useMemo(() => {
-    if (executorTaskTopTab === "new") return executorTasks.available.filter((task) => !task.myDecision);
+    if (executorTaskTopTab === "new") return executorTasks.available;
     if (executorTaskTopTab === "active") return executorTasks.active;
     return executorTasks.archived;
   }, [executorTaskTopTab, executorTasks]);
@@ -947,12 +992,13 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim() })
+        body: JSON.stringify({ taskId: fixesTaskId, action: "fixes", note: fixesValue.trim(), clientFault: fixesClientFault })
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "fixes submit failed");
       setFixesTaskId(null);
       setFixesValue("");
+      setFixesClientFault(false);
       await loadTasks();
       await loadManagerTasks();
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
@@ -1762,15 +1808,27 @@ export default function App() {
                       <div className="space-y-3">
                         {executorVisibleTasks.map((task) => (
                           <div key={task.id} className="space-y-3">
-                            <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
-                            {executorTaskTopTab === "new" ? (
-                              <div className="grid grid-cols-2 gap-2">
-                                <button onClick={() => void handleExecutorTaskDecision(task.id, "accept")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять задачу</button>
-                                <button onClick={() => void handleExecutorTaskDecision(task.id, "decline")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Скрыть</button>
-                              </div>
-                            ) : executorTaskTopTab === "active" ? (
-                              <>
-                                <PipelineView task={task} compact />
+                            <TaskCard
+                              task={task}
+                              onOpen={() => setSelectedTask(task)}
+                              footer={executorTaskTopTab === "new" ? (
+                                task.myDecision === "Принял" ? (
+                                  <div className="rounded-[22px] border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+                                    Ваша заявка на выполнение отправлена. Когда менеджер подтвердит вас, задача автоматически перейдёт в активные.
+                                  </div>
+                                ) : task.myDecision === "Отклонил" ? (
+                                  <div className="rounded-[22px] border border-white/10 bg-white/5 p-4 text-sm text-white/60">
+                                    Вы скрыли эту задачу.
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={() => void handleExecutorTaskDecision(task.id, "accept")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять задачу</button>
+                                    <button onClick={() => void handleExecutorTaskDecision(task.id, "decline")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Скрыть</button>
+                                  </div>
+                                )
+                              ) : executorTaskTopTab === "active" ? (
+                                <>
+                                  <PipelineView task={task} compact />
                                 {task.status === "Правки" && task.stageMaterials?.fixesNote?.value ? (
                                   <button onClick={() => setSelectedTask(task)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">
                                     Посмотреть правки
@@ -1781,8 +1839,9 @@ export default function App() {
                                     {executorActionButtonLabel(task.status)}
                                   </button>
                                 ) : null}
-                              </>
-                            ) : null}
+                                </>
+                              ) : null}
+                            />
                           </div>
                         ))}
                       </div>
@@ -1916,7 +1975,11 @@ export default function App() {
                         <AnimatePresence mode="popLayout">
                           {visibleTasks.map((task) => (
                             <div key={task.id} className="space-y-3">
-                              <TaskCard task={task} onOpen={() => setSelectedTask(task)} />
+                              <TaskCard
+                                task={task}
+                                onOpen={() => setSelectedTask(task)}
+                                footer={activeTopTab === "active" ? <PipelineView task={task} compact /> : null}
+                              />
                               {activeTopTab === "waiting" ? (
                                 (() => {
                                   const managerTask = managerTasks.find((item) => Number(item.id) === Number(task.id)) || task;
@@ -1957,11 +2020,10 @@ export default function App() {
                               ) : null}
                               {activeTopTab === "active" ? (
                                 <>
-                                  <PipelineView task={task} compact />
                                   {task.status === "На проверке" ? (
                                     <div className="grid grid-cols-2 gap-2">
                                       <button onClick={() => void handleManagerStageAction(task.id, "approve")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять</button>
-                                      <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
+                                      <button onClick={() => { setFixesTaskId(task.id); setFixesValue(""); setFixesClientFault(false); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">На правки</button>
                                     </div>
                                   ) : null}
                                   {task.status === "Счёт загружен" ? (
@@ -2473,13 +2535,33 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+        <TaskDetailModal
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+          onManagerApprove={(taskId) => void handleManagerStageAction(taskId, "approve")}
+          onManagerOpenFixes={(taskId) => {
+            setFixesTaskId(taskId);
+            setFixesValue("");
+            setFixesClientFault(false);
+            setFixesError("");
+          }}
+          onManagerMarkPaid={(taskId) => void handleManagerStageAction(taskId, "paid")}
+        />
 
         {fixesTaskId ? (
           <div className="fixed inset-0 z-[65] flex items-end justify-center bg-black/70 p-3">
             <div className="w-full max-w-[430px] rounded-[32px] border border-white/10 bg-[#0b0b10] p-5">
               <div className="mb-3 text-lg font-semibold text-white">Отправить на правки</div>
               <FormTextarea value={fixesValue} onChange={(e) => setFixesValue(e.target.value)} placeholder="Опиши, что нужно исправить" />
+              <label className="mt-3 flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/75">
+                <input
+                  type="checkbox"
+                  checked={fixesClientFault}
+                  onChange={(e) => setFixesClientFault(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-white/20 bg-transparent"
+                />
+                <span>Не учитывать эти правки в рейтинге исполнителя</span>
+              </label>
               {fixesError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{fixesError}</div> : null}
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button onClick={() => { setFixesTaskId(null); setFixesValue(""); setFixesError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Отмена</button>
