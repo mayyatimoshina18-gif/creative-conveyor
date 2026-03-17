@@ -335,6 +335,114 @@ async function loadExecutorsFromDb() {
   }
 }
 
+function hydrateExecutorFromDbRow(row) {
+  if (!row) return null;
+
+  return {
+    telegramId: row.telegram_id ? Number(row.telegram_id) : null,
+    executorCode: row.executor_code,
+    username: row.username,
+    telegramContact: row.telegram_contact,
+    fullName: row.full_name,
+    specializations: row.specializations || [],
+    verifiedSpecializations: row.verified_specializations || [],
+    portfolio: row.portfolio,
+    paymentMethod: row.payment_method,
+    paymentDetails: row.payment_details,
+    paymentFile: row.payment_file,
+    contractData: row.contract_data,
+    paymentInvoices: row.payment_invoices || [],
+    unavailableDays: row.unavailable_days || [],
+    unavailableTime: row.unavailable_time || "",
+    status: row.status,
+    approvedBy: row.approved_by,
+    approvedByManagerId: row.approved_by_manager_id ? Number(row.approved_by_manager_id) : null,
+    reviewAccuracy: row.review_accuracy,
+    reviewSpeed: row.review_speed,
+    reviewAesthetics: row.review_aesthetics,
+    baseRating: row.base_rating,
+    newcomerBoost: row.newcomer_boost,
+    rating: row.rating,
+    completedOrders: row.completed_orders || 0,
+    responseHistory: row.response_history || [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function findExecutorByTelegramIdOrIdentity({ telegramId, username, telegramContact }) {
+  if (telegramId && executors.has(telegramId)) {
+    return executors.get(telegramId);
+  }
+
+  if (telegramId) {
+    const byId = await runQuery(`
+      SELECT *
+      FROM executors
+      WHERE telegram_id = $1
+      LIMIT 1
+    `, [telegramId]);
+
+    if (byId.rows[0]) {
+      const profile = hydrateExecutorFromDbRow(byId.rows[0]);
+      if (profile?.telegramId) {
+        executors.set(profile.telegramId, profile);
+      }
+      return profile;
+    }
+  }
+
+  const normalizedUsername = username ? String(username).trim().replace(/^@+/, "").toLowerCase() : "";
+  const normalizedContact = telegramContact ? String(telegramContact).trim().toLowerCase() : (normalizedUsername ? `@${normalizedUsername}` : "");
+
+  if (normalizedUsername || normalizedContact) {
+    const byIdentity = await runQuery(`
+      SELECT *
+      FROM executors
+      WHERE LOWER(COALESCE(username, '')) = $1
+         OR LOWER(COALESCE(telegram_contact, '')) = $2
+      ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+      LIMIT 1
+    `, [normalizedUsername, normalizedContact]);
+
+    if (byIdentity.rows[0]) {
+      const profile = hydrateExecutorFromDbRow(byIdentity.rows[0]);
+
+      if (profile) {
+        const previousTelegramId = profile.telegramId;
+        if (telegramId && previousTelegramId !== telegramId) {
+          if (previousTelegramId) {
+            executors.delete(previousTelegramId);
+            await runQuery(`DELETE FROM executors WHERE telegram_id = $1`, [previousTelegramId]);
+          }
+          profile.telegramId = telegramId;
+        }
+
+        if (username) {
+          profile.username = String(username).trim().replace(/^@+/, "");
+        }
+
+        if (telegramContact) {
+          profile.telegramContact = String(telegramContact).trim();
+        } else if (!profile.telegramContact && normalizedUsername) {
+          profile.telegramContact = `@${normalizedUsername}`;
+        }
+
+        profile.updatedAt = new Date().toISOString();
+
+        if (profile.telegramId) {
+          await saveExecutorToDb(profile);
+          executors.set(profile.telegramId, profile);
+        }
+
+        return profile;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function loadTasksFromDb() {
   const tasksResult = await runQuery(`
     SELECT *
@@ -3031,7 +3139,11 @@ async function bootstrap() {
               return;
             }
 
-            const profile = executors.get(telegramId);
+            const profile = await findExecutorByTelegramIdOrIdentity({
+              telegramId,
+              username: payload.username ? String(payload.username) : "",
+              telegramContact: payload.telegramContact ? String(payload.telegramContact) : ""
+            });
 
             if (!profile) {
               sendJson(res, 404, { error: "Executor not found" });
