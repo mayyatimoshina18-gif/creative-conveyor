@@ -715,8 +715,9 @@ export default function App() {
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks();
+      void loadManagerTasks();
     }
-  }, [screen, activeBottomTab]);
+  }, [screen, activeBottomTab, createManagerContact]);
 
   useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "executors") {
@@ -724,6 +725,17 @@ export default function App() {
       void loadApprovedExecutors();
     }
   }, [screen, activeBottomTab]);
+
+  useEffect(() => {
+    if (screen !== "managerApp" || activeBottomTab !== "tasks") return;
+
+    const intervalId = window.setInterval(() => {
+      void loadTasks();
+      void loadManagerTasks();
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [screen, activeBottomTab, createManagerContact]);
 
   useEffect(() => {
     if (screen === "executorApp" && executorBottomTab === "tasks" && executor?.telegramId) {
@@ -1919,7 +1931,7 @@ export default function App() {
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
                     <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : "Задачи"}</div>
                   </div>
-                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); void loadManagerTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
                 {activeBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
