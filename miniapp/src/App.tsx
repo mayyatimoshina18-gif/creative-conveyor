@@ -357,7 +357,9 @@ function PipelineView({ task, compact = false }: { task: Task; compact?: boolean
                     {done ? "готово" : active ? "текущий" : "далее"}
                   </div>
                 </div>
-                <div className="mt-1 text-sm text-white/45 break-words">{step.meta}</div>
+                <div className="mt-1 text-sm text-white/45 break-words">
+                  <RenderTextOrLink value={step.meta} />
+                </div>
               </div>
             </div>
           );
@@ -413,7 +415,7 @@ function TaskDetailModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Референсы</div><div><RenderTextOrLink value={task.refsText || "—"} /></div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Комментарий</div><div><RenderTextOrLink value={task.comment || "—"} /></div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Куда отгружать</div><div><RenderTextOrLink value={task.deliveryTarget || "—"} /></div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние правки менеджера</div><div><RenderTextOrLink value={task.stageMaterials?.fixesNote?.value || "—"} /></div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Последняя правка менеджера</div><div><RenderTextOrLink value={task.stageMaterials?.fixesNote?.value || "—"} /></div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Счёт на оплату</div><div><RenderTextOrLink value={task.stageMaterials?.invoice?.value || "—"} /></div></div>
         </div>
 
@@ -2017,7 +2019,7 @@ export default function App() {
                                 onOpen={() => setSelectedTask(task)}
                                 footer={
                                   activeTopTab === "active" ? (
-                                    <div className="space-y-3 rounded-[24px] border border-white/8 bg-black/20 p-4">
+                                    <div className="space-y-3">
                                       <PipelineView task={task} compact />
                                       {task.status === "На проверке" ? (
                                         <div className="grid grid-cols-2 gap-2">
@@ -2718,8 +2720,27 @@ function FixesPreviewCard({
   items?: Array<{ value?: string; createdAt?: string }> | null;
   onOpenAll?: () => void;
 }) {
-  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
-  const visible = normalized.slice(0, 3);
+  const normalized = Array.isArray(items)
+    ? items
+        .filter((item) => item?.value)
+        .map((item) => ({
+          value: String(item?.value || "").trim(),
+          createdAt: item?.createdAt || undefined
+        }))
+        .filter((item) => item.value)
+        .sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        })
+    : [];
+
+  const uniqueItems = normalized.filter((item, index, array) => {
+    return array.findIndex((candidate) => candidate.value === item.value && candidate.createdAt === item.createdAt) === index;
+  });
+
+  const visible = uniqueItems.slice(0, 3);
+
   return (
     <div className="rounded-2xl bg-black/20 p-3">
       <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">История правок</div>
@@ -2733,7 +2754,7 @@ function FixesPreviewCard({
               <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
             </div>
           ))}
-          {normalized.length > 3 ? (
+          {uniqueItems.length > 3 && onOpenAll ? (
             <button onClick={onOpenAll} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-xs text-[#56FFEF]">
               Посмотреть все правки
             </button>
