@@ -3431,7 +3431,17 @@ comment,
       const filtered = tasks.filter((task) => !managerContact || task.managerContact === managerContact).map((task) => ({
         ...mapTaskForMiniapp(task),
         responsesCount: (task.responses || []).length,
-        responses: (task.responses || []).map((r) => ({ executorId: r.executorId, executorName: r.executorName, executorContact: r.executorContact, decision: r.decision }))
+        responses: (task.responses || []).map((r) => {
+          const executor = executors.get(Number(r.executorId));
+          return {
+            executorId: r.executorId,
+            executorName: r.executorName,
+            executorContact: r.executorContact,
+            decision: r.decision,
+            rating: executor?.rating ?? null,
+            completedOrders: executor?.completedOrders ?? 0
+          };
+        })
       }));
       return sendJson(res, 200, { tasks: filtered });
     }
