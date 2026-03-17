@@ -995,7 +995,7 @@ export default function App() {
         });
         if (!response.ok) throw new Error("Failed executor action");
         await loadExecutorTasks(executor.telegramId, { silent: true });
-        await loadTasks();
+        await loadTasks({ silent: true });
       } catch (error) {
         console.error("Failed executor action:", error);
         setExecutorTasksError("Не удалось обновить этап");
@@ -1048,7 +1048,7 @@ export default function App() {
       setStageValue("");
       setStageError("");
       await loadExecutorTasks(executor.telegramId, { silent: true });
-      await loadTasks();
+      await loadTasks({ silent: true });
     } catch (error) {
       console.error("Failed to submit stage:", error);
       setStageError(error instanceof Error ? error.message : "Не удалось отправить материал");
