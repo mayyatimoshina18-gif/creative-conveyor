@@ -396,7 +396,8 @@ function TaskDetailModal({
   onManagerApprove,
   onManagerOpenFixes,
   onManagerMarkPaid,
-  onOpenAllFixes
+  onOpenAllFixes,
+  onOpenExecutorProfile
 }: {
   task: Task | null;
   onClose: () => void;
@@ -404,6 +405,7 @@ function TaskDetailModal({
   onManagerOpenFixes?: (taskId: number) => void;
   onManagerMarkPaid?: (taskId: number) => void;
   onOpenAllFixes?: (task: Task) => void;
+  onOpenExecutorProfile?: (executorId: number) => void;
 }) {
   if (!task) return null;
   return (
@@ -427,7 +429,19 @@ function TaskDetailModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div><div>{task.deadline || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div><div>{task.price || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{task.status || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнитель</div><div>{task.assignedExecutorName || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнитель</div>
+            <div>{task.assignedExecutorName || "—"}</div>
+            {task.assignedExecutorId && onOpenExecutorProfile ? (
+              <button
+                onClick={() => onOpenExecutorProfile(task.assignedExecutorId as number)}
+                className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-xs font-medium text-[#56FFEF]"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Профиль исполнителя
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
@@ -488,6 +502,89 @@ function TaskDetailModal({
           <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
         </div>
 
+      </div>
+    </div>
+  );
+}
+
+
+function ExecutorProfileViewModal({
+  profile,
+  onClose
+}: {
+  profile: ExecutorProfile | null;
+  onClose: () => void;
+}) {
+  if (!profile) return null;
+
+  const latestInvoices = normalizeInvoiceList(profile.paymentInvoices).slice(-5).reverse();
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Профиль исполнителя</div>
+            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{profile.fullName || "Без имени"}</div>
+          </div>
+          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
+            Рейтинг: {typeof profile.rating === "number" ? profile.rating : "—"}
+          </div>
+          <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">
+            Выполнено задач: {profile.completedOrders || 0}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID</div><div>{profile.executorCode || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="break-words">{profile.telegramContact || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{profile.status || "—"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
+            <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
+            <div><RenderTextOrLink value={profile.portfolio || "—"} /></div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Платёжные данные</div>
+            <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Договор</div>
+            <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
+          </div>
+          <div className="rounded-2xl bg-black/20 p-3">
+            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
+            {latestInvoices.length ? (
+              <div className="space-y-2">
+                {latestInvoices.map((invoice, index) => (
+                  <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
+                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-white/45">Счетов пока нет</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+        </div>
       </div>
     </div>
   );
