@@ -10,6 +10,11 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const REMINDER_DELAY_MS = 60 * 1000;
 const MAX_REMINDER_ATTEMPTS = 3;
 
+const INACTIVITY_DAYS_BEFORE_PENALTY = 20;
+const INACTIVITY_WARNING_DAYS = 5;
+const INACTIVITY_DAILY_PENALTY_PERCENT = 0.01;
+const MIN_EXECUTOR_RATING = 10;
+
 const waitingForManagerPassword = new Set();
 const managers = new Set();
 const userStates = new Map();
@@ -1306,6 +1311,77 @@ function sendJson(res, statusCode, payload) {
     "Access-Control-Allow-Headers": "Content-Type"
   });
   res.end(JSON.stringify(payload));
+}
+
+
+function diffInDays(fromDate, toDate = new Date()) {
+  if (!fromDate) return 0;
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  return Math.floor((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+async function applyExecutorInactivityPenalty(executor) {
+  if (!executor || executor.status !== "approved") return executor;
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const lastOfferedAt = executor.lastTaskOfferedAt ? new Date(executor.lastTaskOfferedAt) : null;
+  const lastAcceptedAt = executor.lastTaskAcceptedAt ? new Date(executor.lastTaskAcceptedAt) : null;
+  const fallbackStart = executor.updatedAt ? new Date(executor.updatedAt) : (executor.createdAt ? new Date(executor.createdAt) : null);
+  const lastActiveAt = lastAcceptedAt || fallbackStart;
+
+  if (!lastOfferedAt || !lastActiveAt) return executor;
+
+  const hasRecentPublishedTasks = diffInDays(lastOfferedAt, now) <= INACTIVITY_DAYS_BEFORE_PENALTY;
+  if (!hasRecentPublishedTasks) return executor;
+
+  const idleDays = diffInDays(lastActiveAt, now);
+  const penaltyDays = idleDays - INACTIVITY_DAYS_BEFORE_PENALTY;
+
+  if (idleDays >= INACTIVITY_DAYS_BEFORE_PENALTY - INACTIVITY_WARNING_DAYS && !executor.inactivityWarningSentAt) {
+    executor.inactivityWarningSentAt = nowIso;
+  }
+
+  if (penaltyDays <= 0) return executor;
+
+  const lastPenaltyAt = executor.lastInactivityPenaltyAt ? new Date(executor.lastInactivityPenaltyAt) : null;
+  const alreadyPenalizedDays = lastPenaltyAt ? diffInDays(lastActiveAt, lastPenaltyAt) - INACTIVITY_DAYS_BEFORE_PENALTY : 0;
+  const daysToApply = Math.max(0, penaltyDays - Math.max(0, alreadyPenalizedDays));
+
+  if (!daysToApply) return executor;
+
+  const currentRating = Number(executor.rating || 0);
+  if (!Number.isFinite(currentRating) || currentRating <= 0) {
+    executor.lastInactivityPenaltyAt = nowIso;
+    executor.updatedAt = nowIso;
+    await saveExecutorToDb(executor);
+    executors.set(executor.telegramId, executor);
+    return executor;
+  }
+
+  let nextRating = currentRating;
+  for (let i = 0; i < daysToApply; i += 1) {
+    nextRating = Math.max(MIN_EXECUTOR_RATING, Number((nextRating * (1 - INACTIVITY_DAILY_PENALTY_PERCENT)).toFixed(2)));
+  }
+
+  if (nextRating !== currentRating) {
+    executor.rating = nextRating;
+  }
+
+  executor.lastInactivityPenaltyAt = nowIso;
+  executor.updatedAt = nowIso;
+
+  await saveExecutorToDb(executor);
+  executors.set(executor.telegramId, executor);
+
+  return executor;
+}
+
+async function applyInactivityPenaltyToAllExecutors() {
+  for (const executor of executors.values()) {
+    await applyExecutorInactivityPenalty(executor);
+  }
 }
 
 function calculateExecutorStats(executorTelegramId) {
@@ -3231,6 +3307,10 @@ async function bootstrap() {
               username: payload.username ? String(payload.username) : "",
               telegramContact: payload.telegramContact ? String(payload.telegramContact) : ""
             });
+
+            if (profile) {
+              await applyExecutorInactivityPenalty(profile);
+            }
 
             if (!profile) {
               sendJson(res, 404, { error: "Executor not found" });
