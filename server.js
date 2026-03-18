@@ -329,6 +329,10 @@ async function loadExecutorsFromDb() {
       rating: row.rating,
       completedOrders: row.completed_orders || 0,
       responseHistory: row.response_history || [],
+      lastTaskAcceptedAt: row.last_task_accepted_at || null,
+      lastTaskOfferedAt: row.last_task_offered_at || null,
+      inactivityWarningSentAt: row.inactivity_warning_sent_at || null,
+      lastInactivityPenaltyAt: row.last_inactivity_penalty_at || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     });
@@ -365,6 +369,10 @@ function hydrateExecutorFromDbRow(row) {
     rating: row.rating,
     completedOrders: row.completed_orders || 0,
     responseHistory: row.response_history || [],
+    lastTaskAcceptedAt: row.last_task_accepted_at || null,
+    lastTaskOfferedAt: row.last_task_offered_at || null,
+    inactivityWarningSentAt: row.inactivity_warning_sent_at || null,
+    lastInactivityPenaltyAt: row.last_inactivity_penalty_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -2339,6 +2347,21 @@ async function publishTaskToExecutors(managerChatId, task) {
   task.publishedAt = new Date().toISOString();
   await saveTaskToDb(task);
 
+            const offeredAt = new Date().toISOString();
+            const taskSpecialization = String(task.specialization || "").trim();
+
+            for (const executor of executors.values()) {
+              if (executor.status !== "approved") continue;
+              const executorSpecs = Array.isArray(executor.verifiedSpecializations) && executor.verifiedSpecializations.length
+                ? executor.verifiedSpecializations
+                : (Array.isArray(executor.specializations) ? executor.specializations : []);
+              if (taskSpecialization && executorSpecs.includes(taskSpecialization)) {
+                executor.lastTaskOfferedAt = offeredAt;
+                executor.updatedAt = offeredAt;
+                await saveExecutorToDb(executor);
+                executors.set(executor.telegramId, executor);
+              }
+            }
   const inlineKeyboard = {
     inline_keyboard: [[
       { text: "Принять", callback_data: `accept_${task.id}` },
@@ -3385,6 +3408,10 @@ async function bootstrap() {
                   newcomerBoost: null,
                   rating: null,
                   completedOrders: 0,
+                  lastTaskAcceptedAt: null,
+                  lastTaskOfferedAt: existingProfile.lastTaskOfferedAt || null,
+                  inactivityWarningSentAt: null,
+                  lastInactivityPenaltyAt: null,
                   updatedAt: new Date().toISOString()
                 }
               : {
@@ -3413,6 +3440,10 @@ async function bootstrap() {
                   newcomerBoost: null,
                   rating: null,
                   completedOrders: 0,
+                  lastTaskAcceptedAt: null,
+                  lastTaskOfferedAt: null,
+                  inactivityWarningSentAt: null,
+                  lastInactivityPenaltyAt: null,
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
                   responseHistory: []
@@ -3471,6 +3502,10 @@ async function bootstrap() {
             profile.newcomerBoost = null;
             profile.rating = null;
             profile.completedOrders = 0;
+            profile.lastTaskAcceptedAt = null;
+            profile.lastTaskOfferedAt = null;
+            profile.inactivityWarningSentAt = null;
+            profile.lastInactivityPenaltyAt = null;
             profile.updatedAt = new Date().toISOString();
 
             await saveExecutorToDb(profile);
