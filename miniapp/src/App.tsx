@@ -10,6 +10,7 @@ import {
   Lock,
   Search,
   Clock3,
+  BarChart3,
   Archive,
   CircleDot,
   Pencil,
@@ -189,6 +190,104 @@ function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
     create_gif: 0,
     create_html: 0
   };
+}
+
+function emptyCalculatorInputValues(): Record<CalculatorServiceKey, string> {
+  return {
+    resize_static: "0",
+    resize_animation: "0",
+    resize_gif: "0",
+    resize_html: "0",
+    create_static: "0",
+    create_animation: "0",
+    create_gif: "0",
+    create_html: "0"
+  };
+}
+
+function parseCalculatorInputValues(values: Record<CalculatorServiceKey, string>) {
+  const normalized = emptyCalculatorInputs();
+  let hasError = false;
+
+  CALCULATOR_LINES.forEach((line) => {
+    const raw = String(values[line.key] ?? "").trim();
+
+    if (!raw) {
+      normalized[line.key] = 0;
+      return;
+    }
+
+    if (!/^\d+$/.test(raw)) {
+      hasError = true;
+      return;
+    }
+
+    normalized[line.key] = Number(raw);
+  });
+
+  return {
+    values: normalized,
+    hasError
+  };
+}
+
+function lineChartPoints(series: Array<{ amount: number }>, width: number, height: number, padding = 12) {
+  if (!series.length) return "";
+  const max = Math.max(...series.map((item) => item.amount), 1);
+  const innerWidth = Math.max(1, width - padding * 2);
+  const innerHeight = Math.max(1, height - padding * 2);
+
+  return series
+    .map((item, index) => {
+      const x = padding + (series.length === 1 ? innerWidth / 2 : (innerWidth / Math.max(series.length - 1, 1)) * index);
+      const y = padding + innerHeight - (item.amount / max) * innerHeight;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+function buildCalculatorDashboard(entries: ManagerCalculatorEntry[]) {
+  const summary = entries.reduce(
+    (acc, entry) => {
+      acc.revenue += Number(entry.totals?.revenue || 0);
+      acc.freelancerTotal += Number(entry.totals?.freelancerTotal || 0);
+      acc.productionLead += Number(entry.totals?.productionLead || 0);
+      acc.artDirector += Number(entry.totals?.artDirector || 0);
+      acc.risks += Number(entry.totals?.risks || 0);
+      acc.support += Number(entry.totals?.support || 0);
+      acc.netProfit += Number(entry.totals?.netProfit || 0);
+      acc.ownerProfit += Number(entry.totals?.ownerProfit || 0);
+      acc.investorsProfit += Number(entry.totals?.investorsProfit || 0);
+      return acc;
+    },
+    {
+      revenue: 0,
+      freelancerTotal: 0,
+      productionLead: 0,
+      artDirector: 0,
+      risks: 0,
+      support: 0,
+      netProfit: 0,
+      ownerProfit: 0,
+      investorsProfit: 0
+    }
+  );
+
+  const monthMap = new Map<string, { label: string; amount: number }>();
+  entries.forEach((entry) => {
+    const date = new Date(entry.updatedAt || entry.createdAt || Date.now());
+    const key = `${date.getFullYear()}-${date.getMonth() + 1}`;
+    const label = date.toLocaleDateString("ru-RU", { month: "short", year: "2-digit" });
+    const current = monthMap.get(key) || { label, amount: 0 };
+    current.amount += Number(entry.totals?.revenue || 0);
+    monthMap.set(key, current);
+  });
+
+  const monthly = Array.from(monthMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, value]) => value);
+
+  return { summary, monthly };
 }
 
 function getCalculatorTitle(entry: ManagerCalculatorEntry) {
@@ -885,11 +984,13 @@ export default function App() {
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  const [calculatorTopTab, setCalculatorTopTab] = useState<"new" | "all">("new");
+  const [calculatorTopTab, setCalculatorTopTab] = useState<"new" | "all" | "dashboard">("new");
   const [calculatorTitle, setCalculatorTitle] = useState("");
-  const [calculatorInputs, setCalculatorInputs] = useState<Record<CalculatorServiceKey, number>>(emptyCalculatorInputs());
+  const [calculatorInputValues, setCalculatorInputValues] = useState<Record<CalculatorServiceKey, string>>(emptyCalculatorInputValues());
   const [calculatorEntries, setCalculatorEntries] = useState<ManagerCalculatorEntry[]>([]);
   const [calculatorMessage, setCalculatorMessage] = useState("");
+  const [calculatorError, setCalculatorError] = useState("");
+  const [isLoadingCalculators, setIsLoadingCalculators] = useState(false);
   const [pendingCalculatorIdForTask, setPendingCalculatorIdForTask] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1766,19 +1867,99 @@ export default function App() {
 
   const resetCalculatorForm = () => {
     setCalculatorTitle("");
-    setCalculatorInputs(emptyCalculatorInputs());
+    setCalculatorInputValues(emptyCalculatorInputValues());
     setCalculatorMessage("");
+    setCalculatorError("");
     setPendingCalculatorIdForTask(null);
   };
 
   const calculatedManagerCalculator = useMemo(
-    () => calculateManagerCalculator(calculatorInputs),
-    [calculatorInputs]
+    () => calculateManagerCalculator(parsedCalculatorInputs.values),
+    [parsedCalculatorInputs]
   );
 
+  const parsedCalculatorInputs = useMemo(
+    () => parseCalculatorInputValues(calculatorInputValues),
+    [calculatorInputValues]
+  );
+
+  const calculatorValidationError = parsedCalculatorInputs.hasError
+    ? "Вводите только натуральные числа без букв, пробелов и знаков."
+    : "";
+
   const calculatorSpecializationSuggestions = useMemo(() => {
-    return CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0).map((line) => line.label);
-  }, [calculatorInputs]);
+    return CALCULATOR_LINES.filter((line) => Number(parsedCalculatorInputs.values[line.key] || 0) > 0).map((line) => line.label);
+  }, [parsedCalculatorInputs]);
+
+  const calculatorDashboard = useMemo(
+    () => buildCalculatorDashboard(calculatorEntries),
+    [calculatorEntries]
+  );
+
+  const loadCalculators = async (silent = false) => {
+    const managerContact = createManagerContact.trim();
+    if (!managerContact) return;
+
+    try {
+      if (!silent) {
+        setIsLoadingCalculators(true);
+      }
+      setCalculatorError("");
+      const response = await fetch(`${API_BASE}/api/calculators?managerContact=${encodeURIComponent(managerContact)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || "Failed to load calculators");
+      }
+      const entries = Array.isArray((data as any)?.calculators) ? ((data as any).calculators as ManagerCalculatorEntry[]) : [];
+      setCalculatorEntries(entries);
+      try {
+        window.localStorage.setItem(CALCULATOR_STORAGE_KEY, JSON.stringify(entries));
+      } catch (error) {
+        console.error("Failed to cache calculators locally:", error);
+      }
+    } catch (error) {
+      console.error("Failed to load calculator registry:", error);
+      try {
+        const raw = window.localStorage.getItem(CALCULATOR_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setCalculatorEntries(parsed);
+          }
+        }
+      } catch (innerError) {
+        console.error("Failed to restore local calculator cache:", innerError);
+      }
+      if (!silent) {
+        setCalculatorError("Не удалось загрузить калькуляторы");
+      }
+    } finally {
+      if (!silent) {
+        setIsLoadingCalculators(false);
+      }
+    }
+  };
+
+  const persistCalculatorEntry = async (entry: ManagerCalculatorEntry) => {
+    const managerContact = createManagerContact.trim();
+    if (!managerContact) return;
+
+    const response = await fetch(`${API_BASE}/api/calculators/save`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        managerContact,
+        entry
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as any)?.error || "Failed to save calculator");
+    }
+  };
 
   useEffect(() => {
     try {
@@ -1789,7 +1970,7 @@ export default function App() {
         setCalculatorEntries(parsed);
       }
     } catch (error) {
-      console.error("Failed to load calculator registry:", error);
+      console.error("Failed to load local calculator cache:", error);
     }
   }, []);
 
@@ -1801,7 +1982,18 @@ export default function App() {
     }
   }, [calculatorEntries]);
 
+  useEffect(() => {
+    if (screen === "managerApp" && activeBottomTab === "calculator") {
+      void loadCalculators(false);
+    }
+  }, [screen, activeBottomTab, createManagerContact]);
+
   const saveCurrentCalculator = (options?: { linkTaskId?: number | null; linkTaskTitle?: string | null; silent?: boolean }) => {
+    if (calculatorValidationError) {
+      setCalculatorError(calculatorValidationError);
+      return null;
+    }
+
     const entry: ManagerCalculatorEntry = {
       id: pendingCalculatorIdForTask || `calc-${Date.now()}`,
       title: calculatorTitle.trim() || "Без названия",
@@ -1811,7 +2003,7 @@ export default function App() {
       updatedAt: new Date().toISOString(),
       taskId: options?.linkTaskId ?? null,
       taskTitle: options?.linkTaskTitle ?? null,
-      inputs: { ...calculatorInputs },
+      inputs: { ...parsedCalculatorInputs.values },
       totals: { ...calculatedManagerCalculator.totals }
     };
 
@@ -1825,6 +2017,12 @@ export default function App() {
       return [entry, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     });
 
+    void persistCalculatorEntry(entry).catch((error) => {
+      console.error("Failed to persist calculator entry:", error);
+      setCalculatorError("Не удалось синхронизировать калькулятор с сервером");
+    });
+
+    setCalculatorError("");
     if (!options?.silent) {
       setCalculatorMessage(options?.linkTaskId ? "Калькулятор связан с задачей" : "Калькулятор сохранён");
     }
@@ -1834,27 +2032,36 @@ export default function App() {
 
   const openCalculatorEntry = (entry: ManagerCalculatorEntry) => {
     setCalculatorTitle(entry.title || "");
-    setCalculatorInputs({ ...emptyCalculatorInputs(), ...entry.inputs });
+    setCalculatorInputValues({
+      ...emptyCalculatorInputValues(),
+      ...Object.fromEntries(
+        Object.entries({ ...emptyCalculatorInputs(), ...entry.inputs }).map(([key, value]) => [key, String(value ?? 0)])
+      ) as Record<CalculatorServiceKey, string>
+    });
     setPendingCalculatorIdForTask(entry.id);
     setCalculatorTopTab("new");
     setActiveBottomTab("calculator");
     setCalculatorMessage("");
+    setCalculatorError("");
   };
 
   const handleSaveCalculatorOnly = () => {
-    saveCurrentCalculator();
-    setCalculatorTopTab("all");
+    const saved = saveCurrentCalculator();
+    if (saved) {
+      setCalculatorTopTab("all");
+    }
   };
 
   const handleCreateTaskFromCalculator = () => {
     const saved = saveCurrentCalculator({ silent: true });
+    if (!saved) return;
     setPendingCalculatorIdForTask(saved.id);
     setCreatePrice(String(Math.round(calculatedManagerCalculator.totals.freelancerTotal || 0)));
     if (!createTitle.trim()) {
       setCreateTitle((calculatorTitle || "Задача из калькулятора").trim());
     }
     if (!createCategories.length) {
-      const inferred = CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0)
+      const inferred = CALCULATOR_LINES.filter((line) => Number(parsedCalculatorInputs.values[line.key] || 0) > 0)
         .map((line) => line.label)
         .filter((item) => SPECIALIZATION_OPTIONS.includes(item));
       if (inferred.length) {
@@ -1862,6 +2069,7 @@ export default function App() {
       }
     }
     setCalculatorMessage("Стоимость исполнителя перенесена в создание задачи");
+    setCalculatorError("");
     setActiveBottomTab("create");
   };
 
@@ -2569,9 +2777,9 @@ export default function App() {
                 <div className="mb-4 flex items-center justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : "Задачи"}</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : activeBottomTab === "calculator" ? "Калькулятор" : "Задачи"}</div>
                   </div>
-                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); void loadManagerTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
+                  <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); void loadManagerTasks(); } else if (activeBottomTab === "calculator") { void loadCalculators(false); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
                 {activeBottomTab === "tasks" && (
                   <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
@@ -2668,51 +2876,56 @@ export default function App() {
                                               ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
                                               : "";
                                             return (
-                                              <button
+                                              <div
                                                 key={`${task.id}-${response.executorId}`}
-                                                type="button"
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault();
+                                                    void openExecutorProfileById(response.executorId);
+                                                  }
+                                                }}
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
-                                                  {rank ? (
-                                                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
-                                                      #{rank} в рейтинге
-                                                    </div>
-                                                  ) : null}
+                                                <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
+                                                  #{rank && rank > 0 ? rank : "—"}
+                                                </div>
 
-                                                  <div className="text-base font-semibold leading-tight text-white">
-                                                    {response.executorName || "Без имени"}
-                                                  </div>
+                                                <div className="text-base font-semibold leading-tight text-white">
+                                                  {response.executorName || "Без имени"}
+                                                </div>
 
-                                                  <div className="mt-2">
-                                                    {telegramLink ? (
-                                                      <a
-                                                        href={telegramLink}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
-                                                      >
-                                                        {response.executorContact}
-                                                      </a>
-                                                    ) : (
-                                                      <div className="text-sm text-white/45">Контакт не указан</div>
-                                                    )}
-                                                  </div>
-
-                                                  {accepted ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(event) => {
-                                                        event.stopPropagation();
-                                                        void handleAssignTask(task.id, response.executorId);
-                                                      }}
-                                                      className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                                                <div className="mt-2">
+                                                  {telegramLink ? (
+                                                    <a
+                                                      href={telegramLink}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      onClick={(event) => event.stopPropagation()}
+                                                      className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
                                                     >
-                                                      Подтвердить
-                                                    </button>
-                                                  ) : null}
-                                                </button>
+                                                      {response.executorContact}
+                                                    </a>
+                                                  ) : (
+                                                    <div className="text-sm text-white/45">Контакт не указан</div>
+                                                  )}
+                                                </div>
+
+                                                {accepted ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      void handleAssignTask(task.id, response.executorId);
+                                                    }}
+                                                    className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                                                  >
+                                                    Подтвердить
+                                                  </button>
+                                                ) : null}
+                                              </div>
                                             );
                                           })}
                                         </div>
@@ -3181,21 +3394,26 @@ export default function App() {
                   </div>
                 ) : activeBottomTab === "calculator" ? (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCalculatorTopTab("new")}
-                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
-                      >
-                        Новый калькулятор
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCalculatorTopTab("all")}
-                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
-                      >
-                        Все калькуляторы
-                      </button>
+                    <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                      {[
+                        { key: "new", label: "Новый", icon: Calculator },
+                        { key: "all", label: "Все", icon: Archive },
+                        { key: "dashboard", label: "Дашборд", icon: BarChart3 }
+                      ].map((tab) => {
+                        const Icon = tab.icon;
+                        const active = calculatorTopTab === tab.key;
+                        return (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setCalculatorTopTab(tab.key as "new" | "all" | "dashboard")}
+                            className={cn("rounded-[18px] px-3 py-3 text-left transition", active ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5")}
+                          >
+                            <Icon className="mb-2 h-4 w-4" />
+                            <div className="text-[12px] font-medium leading-4">{tab.label}</div>
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {calculatorTopTab === "new" ? (
@@ -3216,45 +3434,52 @@ export default function App() {
                                   <div className="mt-1 text-xs text-white/35">Клиент {formatRubles(line.clientPrice)} · исполнитель {formatRubles(line.freelancerRate)}</div>
                                 </div>
                                 <input
-                                  type="number"
-                                  min="0"
-                                  value={calculatorInputs[line.key] || 0}
-                                  onChange={(e) => {
-                                    const value = Math.max(0, Number(e.target.value || 0));
-                                    setCalculatorInputs((prev) => ({ ...prev, [line.key]: value }));
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={calculatorInputValues[line.key] ?? "0"}
+                                  onFocus={(e) => {
+                                    if (e.target.value === "0") {
+                                      setCalculatorInputValues((prev) => ({ ...prev, [line.key]: "" }));
+                                    }
                                   }}
-                                  className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-right text-base text-white outline-none"
+                                  onBlur={(e) => {
+                                    if (!e.target.value.trim()) {
+                                      setCalculatorInputValues((prev) => ({ ...prev, [line.key]: "0" }));
+                                    }
+                                  }}
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    setCalculatorInputValues((prev) => ({ ...prev, [line.key]: next }));
+                                    setCalculatorMessage("");
+                                  }}
+                                  className="w-full appearance-none rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-right text-base text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                                 />
                               </div>
                             ))}
                           </div>
                         </div>
 
+                        {calculatorValidationError || calculatorError ? (
+                          <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+                            {calculatorValidationError || calculatorError}
+                          </div>
+                        ) : null}
+
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Исполнителю</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.freelancerTotal)}</div>
-                          </div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Менеджер</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.productionLead)}</div>
-                          </div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Арт-директор</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.artDirector)}</div>
-                          </div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Риски</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.risks)}</div>
-                          </div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Support бюджет</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.support)}</div>
-                          </div>
-                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.netProfit)}</div>
-                          </div>
+                          {[
+                            ["Исполнителю", calculatedManagerCalculator.totals.freelancerTotal],
+                            ["Менеджер", calculatedManagerCalculator.totals.productionLead],
+                            ["Арт-директор", calculatedManagerCalculator.totals.artDirector],
+                            ["Риски", calculatedManagerCalculator.totals.risks],
+                            ["Support бюджет", calculatedManagerCalculator.totals.support],
+                            ["Чистая прибыль", calculatedManagerCalculator.totals.netProfit]
+                          ].map(([label, value]) => (
+                            <div key={String(label)} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/35">{label}</div>
+                              <div className="mt-2 text-2xl font-semibold text-white">{calculatorValidationError ? "Ошибка" : formatRubles(Number(value || 0))}</div>
+                            </div>
+                          ))}
                         </div>
 
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
@@ -3271,7 +3496,7 @@ export default function App() {
                             ].map(([label, value]) => (
                               <div key={String(label)} className="flex items-center justify-between gap-3 rounded-2xl bg-black/20 px-4 py-3 text-white/75">
                                 <div>{label}</div>
-                                <div className="font-medium text-white">{formatRubles(Number(value || 0))}</div>
+                                <div className="font-medium text-white">{calculatorValidationError ? "Ошибка" : formatRubles(Number(value || 0))}</div>
                               </div>
                             ))}
                           </div>
@@ -3296,7 +3521,142 @@ export default function App() {
                           </button>
                         </div>
                       </div>
+                    ) : calculatorTopTab === "all" ? (
+                      <div className="space-y-3">
+                        {isLoadingCalculators ? (
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/45">Загружаю калькуляторы…</div>
+                        ) : calculatorEntries.length ? calculatorEntries.map((entry) => (
+                          <div key={entry.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-base font-semibold text-white">{getCalculatorTitle(entry)}</div>
+                                <div className="mt-1 text-xs text-white/40">{formatDateLabel(entry.updatedAt) || "Без даты"}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openCalculatorEntry(entry)}
+                                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/75"
+                              >
+                                Открыть
+                              </button>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                              <div className="rounded-2xl bg-black/20 p-3">
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнителю</div>
+                                <div className="text-white">{formatRubles(entry.totals.freelancerTotal)}</div>
+                              </div>
+                              <div className="rounded-2xl bg-black/20 p-3">
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
+                                <div className="text-white">{formatRubles(entry.totals.netProfit)}</div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-black/20 p-3">
+                              <div>
+                                <div className="text-[11px] uppercase tracking-[0.16em] text-white/35">Связанная задача</div>
+                                <div className="mt-1 text-sm text-white/75">
+                                  {entry.taskId ? `#${entry.taskId}${entry.taskTitle ? ` · ${entry.taskTitle}` : ""}` : "Пока не привязан"}
+                                </div>
+                              </div>
+                              {entry.taskId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openTaskFromCalculator(entry.taskId)}
+                                  className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-xs text-[#56FFEF]"
+                                >
+                                  Открыть задачу
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="flex h-[40vh] items-center justify-center rounded-[24px] border border-white/10 bg-white/[0.04] px-6 text-center text-white/40">
+                            Пока нет сохранённых калькуляторов
+                          </div>
+                        )}
+                      </div>
                     ) : (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Всего калькуляторов</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorEntries.length}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Отрулил задач на сумму</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.summary.revenue)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Заработал менеджер</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.summary.productionLead)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.summary.netProfit)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Владельцу</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.summary.ownerProfit)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Инвесторам</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.summary.investorsProfit)}</div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                          <div className="mb-3 text-sm text-white/55">Сумма задач по месяцам</div>
+                          {calculatorDashboard.monthly.length ? (
+                            <div className="space-y-4">
+                              <svg viewBox="0 0 320 160" className="h-40 w-full overflow-visible">
+                                <polyline
+                                  fill="none"
+                                  stroke="rgba(86,255,239,0.95)"
+                                  strokeWidth="3"
+                                  points={lineChartPoints(calculatorDashboard.monthly, 320, 160, 18)}
+                                />
+                                {calculatorDashboard.monthly.map((item, index) => {
+                                  const points = lineChartPoints(calculatorDashboard.monthly, 320, 160, 18).split(" ");
+                                  const [x, y] = points[index].split(",");
+                                  return <circle key={`${item.label}-${index}`} cx={x} cy={y} r="4" fill="rgba(86,255,239,0.95)" />;
+                                })}
+                              </svg>
+                              <div className="grid grid-cols-3 gap-2 text-xs text-white/45">
+                                {calculatorDashboard.monthly.map((item) => (
+                                  <div key={item.label} className="rounded-2xl bg-black/20 px-3 py-2">
+                                    <div>{item.label}</div>
+                                    <div className="mt-1 text-white/70">{formatRubles(item.amount)}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl bg-black/20 px-4 py-5 text-sm text-white/45">Пока недостаточно данных для графика.</div>
+                          )}
+                        </div>
+
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                          <div className="mb-3 text-sm text-white/55">Финансовый расклад менеджера</div>
+                          <div className="space-y-2 text-sm">
+                            {[
+                              ["Исполнителям", calculatorDashboard.summary.freelancerTotal],
+                              ["Арт-директору", calculatorDashboard.summary.artDirector],
+                              ["Риски", calculatorDashboard.summary.risks],
+                              ["Support", calculatorDashboard.summary.support]
+                            ].map(([label, value]) => (
+                              <div key={String(label)} className="flex items-center justify-between rounded-2xl bg-black/20 px-4 py-3 text-white/75">
+                                <div>{label}</div>
+                                <div className="font-medium text-white">{formatRubles(Number(value || 0))}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                ) : (
                       <div className="space-y-3">
                         {calculatorEntries.length ? calculatorEntries.map((entry) => (
                           <div key={entry.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
