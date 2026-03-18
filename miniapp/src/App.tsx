@@ -2374,27 +2374,60 @@ export default function App() {
                                           {taskResponses.map((response: any) => {
                                             const rank = getApprovedExecutorRank(response.executorId);
                                             const accepted = response?.decision === "Принял";
+                                            const telegramLink = response.executorContact
+                                              ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
+                                              : "";
                                             return (
-                                              <div key={`${task.id}-${response.executorId}`} className="rounded-2xl border border-white/10 bg-[#0b0b10] p-3">
-                                                <div className="flex items-start justify-between gap-3">
-                                                  <div>
-                                                    <div className="text-sm font-medium text-white">{response.executorName || "Без имени"}</div>
-                                                    <div className="mt-1 text-xs text-white/45">{response.executorContact || "Контакт не указан"}</div>
-                                                    <div className="mt-2 flex flex-wrap gap-2">
-                                                      {response.rating != null ? <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-[11px] text-[#56FFEF]">Рейтинг {response.rating}</div> : null}
-                                                      {rank ? <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-white/60">#{rank} в рейтинге</div> : null}
+                                              <button
+                                                key={`${task.id}-${response.executorId}`}
+                                                type="button"
+                                                onClick={() => void openExecutorProfileById(response.executorId)}
+                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-3 text-left transition hover:border-[#56FFEF]/20"
+                                              >
+                                                <div className="rounded-[22px] border border-white/10 bg-black/20 p-4">
+                                                  <div className="text-base font-semibold leading-tight text-white">
+                                                    {response.executorName || "Без имени"}
+                                                  </div>
+
+                                                  <div className="mt-2">
+                                                    {telegramLink ? (
+                                                      <a
+                                                        href={telegramLink}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
+                                                      >
+                                                        {response.executorContact}
+                                                      </a>
+                                                    ) : (
+                                                      <div className="text-sm text-white/45">Контакт не указан</div>
+                                                    )}
+                                                  </div>
+
+                                                  <div className="mt-4 grid grid-cols-2 gap-2">
+                                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
+                                                      Рейтинг {response.rating != null ? response.rating : "—"}
+                                                    </div>
+                                                    <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/65">
+                                                      {rank ? `#${rank} в рейтинге` : "Без места"}
                                                     </div>
                                                   </div>
+
                                                   {accepted ? (
-                                                    <div className="flex items-center gap-2">
-                                                      <button onClick={() => void openExecutorProfileById(response.executorId)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white">Профиль</button>
-                                                      <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
-                                                    </div>
-                                                  ) : (
-                                                    <button onClick={() => void openExecutorProfileById(response.executorId)} className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/70">Профиль</button>
-                                                  )}
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void handleAssignTask(task.id, response.executorId);
+                                                      }}
+                                                      className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                                                    >
+                                                      Подтвердить
+                                                    </button>
+                                                  ) : null}
                                                 </div>
-                                              </div>
+                                              </button>
                                             );
                                           })}
                                         </div>
