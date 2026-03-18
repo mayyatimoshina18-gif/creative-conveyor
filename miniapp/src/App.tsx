@@ -2870,7 +2870,7 @@ export default function App() {
                                                 ) : null}
                                               </div>
                                             );
-                                          })}})}
+                                          })}
                                         </div>
                                       ) : null;
                                     })()
@@ -3472,7 +3472,7 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                    ) : calculatorTopTab === "all" ? (
+) : calculatorTopTab === "all" ? (
                       <div className="space-y-3">
                         {calculatorEntries.length ? calculatorEntries.map((entry) => (
                           <div key={entry.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
