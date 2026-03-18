@@ -274,7 +274,7 @@ const bottomTabs = [
   { key: "tasks", label: "Задачи", icon: Briefcase },
   { key: "create", label: "Создать", icon: PlusSquare },
   { key: "calculator", label: "Калькулятор", icon: Calculator },
-  { key: "profile", label: "Профиль", icon: Trophy }
+  { key: "profile", label: "Профиль+", icon: Trophy }
 ];
 
 function cn(...classes: string[]) {
@@ -3557,6 +3557,11 @@ export default function App() {
                   </div>
                 ) : activeBottomTab === "profile" ? (
                   <div className="space-y-4">
+                    <div className="rounded-[24px] border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#56FFEF]">manager profile live build</div>
+                      <div className="mt-1 text-sm text-white/80">Если ты видишь этот блок, значит открылся новый фронтовый профиль менеджера.</div>
+                    </div>
+
                     <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
                       <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Профиль менеджера</div>
                       <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{createManagerContact.trim() || "@manager"}</div>
