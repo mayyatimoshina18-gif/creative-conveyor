@@ -250,7 +250,12 @@ function normalizeInvoiceList(value: ExecutorProfile["paymentInvoices"]) {
       createdAt:
         typeof item === "string"
           ? new Date().toISOString()
-          : String(item?.createdAt || new Date().toISOString())
+          : String(item?.createdAt || new Date().toISOString()),
+      taskId: typeof item === "string" ? undefined : item?.taskId,
+      taskTitle: typeof item === "string" ? undefined : item?.taskTitle,
+      price: typeof item === "string" ? undefined : item?.price,
+      paymentMethod: typeof item === "string" ? undefined : item?.paymentMethod,
+      managerContact: typeof item === "string" ? undefined : item?.managerContact
     }))
     .filter((item) => item.value);
 }
@@ -514,6 +519,7 @@ function TaskDetailModal({
 }
 
 
+
 function ExecutorProfileViewModal({
   profile,
   onClose
@@ -523,10 +529,10 @@ function ExecutorProfileViewModal({
 }) {
   if (!profile) return null;
 
-  const latestInvoices = normalizeInvoiceList(profile.paymentInvoices).slice(-5).reverse();
+  const invoices = normalizeInvoiceList(profile.paymentInvoices).slice().reverse();
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-3">
+    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
       <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -574,97 +580,18 @@ function ExecutorProfileViewModal({
             <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
           </div>
           <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
-            {latestInvoices.length ? (
-              <div className="space-y-2">
-                {latestInvoices.map((invoice, index) => (
-                  <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
-                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-white/45">Счетов пока нет</div>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-
-function ExecutorProfileViewModal({
-  profile,
-  onClose
-}: {
-  profile: ExecutorProfile | null;
-  onClose: () => void;
-}) {
-  if (!profile) return null;
-
-  const invoices = Array.isArray(profile.paymentInvoices) ? [...profile.paymentInvoices].slice(-10).reverse() : [];
-
-  return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/70 p-3">
-      <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <div className="mb-1 text-xs uppercase tracking-[0.18em] text-white/35">Профиль исполнителя</div>
-            <div className="text-2xl font-semibold tracking-[-0.04em] text-white">{profile.fullName || "Без имени"}</div>
-          </div>
-          <button onClick={onClose} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="mb-4 flex flex-wrap gap-2">
-          <div className="rounded-full bg-[#56FFEF]/10 px-3 py-1.5 text-sm font-medium text-[#56FFEF]">
-            рейтинг {typeof profile.rating === "number" ? profile.rating : "—"}
-          </div>
-          <div className="rounded-full bg-white/5 px-3 py-1.5 text-sm font-medium text-white/75">
-            выполнено задач {profile.completedOrders || 0}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID</div><div>{profile.executorCode || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="break-words">{profile.telegramContact || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Статус</div><div>{profile.status || "—"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
-        </div>
-
-        <div className="mt-4 space-y-3 text-sm text-white/75">
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
-            <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
-            <div><RenderTextOrLink value={profile.portfolio || "—"} /></div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Платёжные данные</div>
-            <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Договор</div>
-            <div><RenderTextOrLink value={getPaymentDetailsText(profile.contractData as any) || "—"} /></div>
-          </div>
-          <div className="rounded-2xl bg-black/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Последние счета</div>
+            <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-white/35">Все счета</div>
             {invoices.length ? (
               <div className="space-y-2">
-                {invoices.map((invoice: any, index: number) => (
-                  <div key={`invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="text-xs text-white/35">{formatDateLabel(invoice?.createdAt) || "Без даты"}</div>
-                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice?.value || "—"} /></div>
+                {invoices.map((invoice, index) => (
+                  <div key={`profile-invoice-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-white/35">{formatDateLabel(invoice.createdAt) || "Без даты"}</div>
+                      {invoice.price ? <div className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-white/60">{invoice.price}</div> : null}
+                    </div>
+                    {invoice.taskTitle ? <div className="mt-2 text-sm font-medium text-white/85">{invoice.taskTitle}</div> : null}
+                    {invoice.taskId ? <div className="mt-1 text-xs text-white/40">Задача #{invoice.taskId}</div> : null}
+                    <div className="mt-1 break-words text-sm text-white/80"><RenderTextOrLink value={invoice.value || "—"} /></div>
                   </div>
                 ))}
               </div>
@@ -672,6 +599,10 @@ function ExecutorProfileViewModal({
               <div className="text-white/45">Счётов пока нет</div>
             )}
           </div>
+        </div>
+
+        <div className="mt-4">
+          <button onClick={onClose} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
         </div>
       </div>
     </div>
@@ -748,6 +679,8 @@ export default function App() {
   const [managerExecutorsTopTab, setManagerExecutorsTopTab] = useState<"pending" | "registry">("pending");
   const [pendingExecutors, setPendingExecutors] = useState<ExecutorProfile[]>([]);
   const [approvedExecutors, setApprovedExecutors] = useState<ExecutorProfile[]>([]);
+  const [selectedExecutorProfile, setSelectedExecutorProfile] = useState<ExecutorProfile | null>(null);
+  const [executorRegistryFilter, setExecutorRegistryFilter] = useState<string>("all");
   const [isLoadingPendingExecutors, setIsLoadingPendingExecutors] = useState(false);
   const [isLoadingApprovedExecutors, setIsLoadingApprovedExecutors] = useState(false);
   const [pendingExecutorsError, setPendingExecutorsError] = useState("");
@@ -852,6 +785,96 @@ export default function App() {
     () => approvedExecutors.find((item) => Number(item.telegramId) === Number(editingRegistryTelegramId)) || null,
     [approvedExecutors, editingRegistryTelegramId]
   );
+
+  const allManagerKnownTasks = useMemo(() => {
+    return [
+      ...(tasksData.waiting || []),
+      ...(tasksData.active || []),
+      ...(tasksData.archived || []),
+      ...(managerTasks || [])
+    ];
+  }, [tasksData, managerTasks]);
+
+  const enrichExecutorProfileWithLocalStats = (profile: ExecutorProfile | null) => {
+    if (!profile?.telegramId) return profile;
+
+    const assignedTasks = allManagerKnownTasks.filter((task) => Number(task.assignedExecutorId || 0) === Number(profile.telegramId));
+    const completedTasks = assignedTasks.filter((task) => {
+      const status = String(task.status || "");
+      return [
+        "Выполнена",
+        "Не оплачена",
+        "Ожидает счёт",
+        "Счёт загружен",
+        "Ожидает подтверждения оплаты",
+        "Оплачена",
+        "Завершена",
+        "Закрыта"
+      ].includes(status);
+    });
+
+    const revisionValues = completedTasks
+      .map((task) => Number(task.revisionCount || 0))
+      .filter((value) => Number.isFinite(value));
+
+    const averageRevisions = revisionValues.length
+      ? Number((revisionValues.reduce((sum, value) => sum + value, 0) / revisionValues.length).toFixed(1))
+      : 0;
+
+    const earnedAmount = completedTasks.reduce((sum, task) => {
+      const status = String(task.status || "");
+      const paid = ["Оплачена", "Завершена", "Закрыта"].includes(status);
+      if (!paid) return sum;
+
+      const rawPrice = String(task.price || "");
+      const numericPrice = Number(rawPrice.replace(/[^\d,.-]/g, "").replace(",", "."));
+      return Number.isFinite(numericPrice) ? sum + numericPrice : sum;
+    }, 0);
+
+    return {
+      ...profile,
+      completedOrders: completedTasks.length,
+      stats: {
+        completedTasks: completedTasks.length,
+        averageRevisions,
+        earnedAmount: Number(earnedAmount.toFixed(2))
+      }
+    };
+  };
+
+  const filteredApprovedExecutors = useMemo(() => {
+    const base = approvedExecutors.map((profile) => enrichExecutorProfileWithLocalStats(profile) || profile);
+    if (executorRegistryFilter === "all") return base;
+
+    return base.filter((profile) => {
+      const specializations = profile?.verifiedSpecializations?.length
+        ? profile.verifiedSpecializations
+        : profile?.specializations || [];
+      return specializations.includes(executorRegistryFilter);
+    });
+  }, [approvedExecutors, executorRegistryFilter, allManagerKnownTasks]);
+
+  const openExecutorProfileById = async (executorId: number) => {
+    let profile = approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+
+    if (!profile) {
+      try {
+        await loadApprovedExecutors();
+      } catch (error) {
+        console.error(error);
+      }
+      profile = approvedExecutors.find((item) => Number(item.telegramId) === Number(executorId)) || null;
+    }
+
+    const enrichedProfile = enrichExecutorProfileWithLocalStats(profile);
+
+    if (!enrichedProfile) {
+      setManagerTasksError("Профиль исполнителя пока не найден");
+      return;
+    }
+
+    setSelectedExecutorProfile(enrichedProfile);
+  };
 
   const fillExecutorFormFromProfile = (profile: ExecutorProfile | null) => {
     if (!profile) return;
@@ -2297,9 +2320,12 @@ export default function App() {
                                                     </div>
                                                   </div>
                                                   {accepted ? (
-                                                    <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                                    <div className="flex items-center gap-2">
+                                                      <button onClick={() => void openExecutorProfileById(response.executorId)} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white">Профиль</button>
+                                                      <button onClick={() => void handleAssignTask(task.id, response.executorId)} className="rounded-2xl bg-[#56FFEF] px-3 py-2 text-sm font-medium text-black">Подтвердить</button>
+                                                    </div>
                                                   ) : (
-                                                    <div className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/45">Ожидает</div>
+                                                    <button onClick={() => void openExecutorProfileById(response.executorId)} className="rounded-2xl border border-white/10 px-3 py-2 text-xs text-white/70">Профиль</button>
                                                   )}
                                                 </div>
                                               </div>
@@ -2683,9 +2709,34 @@ export default function App() {
                                 </div>
                               </div>
                             ) : null}
-                            {approvedExecutors.map((profile, index) => (
-                              <div key={`${profile.telegramId}-${index}`} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                                <div className="mb-3 flex items-start justify-between gap-3">
+                            <div className="mb-4 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setExecutorRegistryFilter("all")}
+                                className={cn("rounded-full border px-3 py-2 text-sm transition", executorRegistryFilter === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                              >
+                                Все
+                              </button>
+                              {SPECIALIZATION_OPTIONS.map((item) => (
+                                <button
+                                  type="button"
+                                  key={`registry-filter-${item}`}
+                                  onClick={() => setExecutorRegistryFilter(item)}
+                                  className={cn("rounded-full border px-3 py-2 text-sm transition", executorRegistryFilter === item ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                                >
+                                  {item}
+                                </button>
+                              ))}
+                            </div>
+
+                            {filteredApprovedExecutors.map((profile, index) => (
+                              <button
+                                key={`${profile.telegramId}-${index}`}
+                                type="button"
+                                onClick={() => setSelectedExecutorProfile(enrichExecutorProfileWithLocalStats(profile))}
+                                className="w-full rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.06]"
+                              >
+                                <div className="flex items-start justify-between gap-3">
                                   <div>
                                     <div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">
                                       Место #{index + 1}
@@ -2693,13 +2744,23 @@ export default function App() {
                                     <div className="text-base font-semibold text-white">
                                       {profile.fullName || "Без имени"}
                                     </div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {(profile.verifiedSpecializations?.length ? profile.verifiedSpecializations : profile.specializations || []).map((item) => (
+                                        <span key={`${profile.telegramId}-${item}`} className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-2.5 py-1 text-xs text-[#56FFEF]">
+                                          {item}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
+
                                   <div className="flex items-center gap-2">
                                     <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-1 text-xs text-[#56FFEF]">
                                       {typeof profile.rating === "number" ? `${profile.rating} pts` : "—"}
                                     </div>
                                     <button
-                                      onClick={() => {
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
                                         setEditingRegistryTelegramId(Number(profile.telegramId));
                                         fillManagerExecutorForm(profile);
                                         setManagerExecutorMessage("");
@@ -2711,73 +2772,7 @@ export default function App() {
                                     </button>
                                   </div>
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">ID исполнителя</div>
-                                    <div>{profile.executorCode || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Контакт</div>
-                                    <div className="break-words">{profile.telegramContact || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Специализации</div>
-                                    <div>{profile.verifiedSpecializations?.length ? profile.verifiedSpecializations.join(", ") : profile.specializations?.join(", ") || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заказов</div>
-                                    <div>{profile.completedOrders || 0}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Портфолио</div>
-                                    <div className="break-words">{profile.portfolio || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ выплаты</div>
-                                    <div>{profile.paymentMethod || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Реквизиты</div>
-                                    <div className="whitespace-pre-wrap break-words">{getPaymentDetailsText(profile.paymentDetails) || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные дни</div>
-                                    <div>{profile.unavailableDays?.length ? profile.unavailableDays.join(", ") : "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Недоступные часы</div>
-                                    <div className="whitespace-pre-wrap break-words">{profile.unavailableTime || "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка ТЗ</div>
-                                    <div>{profile.reviewAccuracy ?? "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка сроков</div>
-                                    <div>{profile.reviewSpeed ?? "—"}</div>
-                                  </div>
-                                  <div className="rounded-2xl bg-black/20 p-3">
-                                    <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Оценка эстетики</div>
-                                    <div>{profile.reviewAesthetics ?? "—"}</div>
-                                  </div>
-                                </div>
-
-                                <div className="mt-3 space-y-2 text-sm text-white/55">
-                                  <div>Подтвердил: {profile.approvedBy || "—"}</div>
-                                  <div className="break-words">Договор: {getPaymentDetailsText(profile.contractData as any) || "—"}</div>
-                                  <div>Счетов на оплату: {profile.paymentInvoices?.length || 0}</div>
-                                  {profile.paymentInvoices?.length ? (
-                                    <div className="space-y-1">
-                                      {profile.paymentInvoices.slice(-3).map((invoice, invoiceIndex) => (
-                                        <div key={`invoice-preview-${profile.telegramId}-${invoiceIndex}`} className="break-words text-white/45">
-                                          • {invoice.value || "—"} {invoice.createdAt ? `(${formatDateLabel(invoice.createdAt)})` : ""}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         )}
