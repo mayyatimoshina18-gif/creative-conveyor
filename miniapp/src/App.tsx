@@ -1165,6 +1165,7 @@ export default function App() {
     if (screen === "managerApp" && activeBottomTab === "tasks") {
       void loadTasks(false);
       void loadManagerTasks();
+      void loadApprovedExecutors();
     }
   }, [screen, activeBottomTab, createManagerContact]);
 
@@ -1181,6 +1182,7 @@ export default function App() {
     const intervalId = window.setInterval(() => {
       void loadTasks(true);
       void loadManagerTasks();
+      void loadApprovedExecutors();
     }, 5000);
 
     return () => window.clearInterval(intervalId);
@@ -2787,7 +2789,7 @@ export default function App() {
                                         <div className="space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
                                           <div className="text-sm text-white/55">Отклики исполнителей</div>
                                           {taskResponses.map((response: any) => {
-                                            const rank = getApprovedExecutorRank(response.executorId);
+                                            const rank = response?.rank || getApprovedExecutorRank(response.executorId);
                                             const accepted = response?.decision === "Принял";
                                             const telegramLink = response.executorContact
                                               ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
@@ -2795,8 +2797,16 @@ export default function App() {
                                             return (
                                               <div
                                                 key={`${task.id}-${response.executorId}`}
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
-                                                className="w-full cursor-pointer rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20 active:scale-[0.995]"
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault();
+                                                    void openExecutorProfileById(response.executorId);
+                                                  }
+                                                }}
+                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
                                                 <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
                                                   #{rank && rank > 0 ? rank : "—"}
