@@ -2813,7 +2813,7 @@ export default function App() {
                                         <div className="space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
                                           <div className="text-sm text-white/55">Отклики исполнителей</div>
                                           {taskResponses.map((response: any) => {
-                                            const rank = getApprovedExecutorRank(response.executorId);
+                                            const rank = response?.rank || getApprovedExecutorRank(response.executorId);
                                             const accepted = response?.decision === "Принял";
                                             const telegramLink = response.executorContact
                                               ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
@@ -2821,16 +2821,8 @@ export default function App() {
                                             return (
                                               <div
                                                 key={`${task.id}-${response.executorId}`}
-                                                role="button"
-                                                tabIndex={0}
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
-                                                onKeyDown={(event) => {
-                                                  if (event.key === "Enter" || event.key === " ") {
-                                                    event.preventDefault();
-                                                    void openExecutorProfileById(response.executorId);
-                                                  }
-                                                }}
-                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
+                                                className="w-full cursor-pointer rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20 active:scale-[0.995]"
                                               >
                                                 <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
                                                   #{rank && rank > 0 ? rank : "—"}
@@ -3337,27 +3329,36 @@ export default function App() {
                   </div>
                 ) : activeBottomTab === "calculator" ? (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("new")}
-                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
+                        className={cn(
+                          "rounded-[18px] px-3 py-3 text-left transition",
+                          calculatorTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                        )}
                       >
-                        Новый калькулятор
+                        <div className="text-[12px] font-medium leading-4">Новый</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("all")}
-                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
+                        className={cn(
+                          "rounded-[18px] px-3 py-3 text-left transition",
+                          calculatorTopTab === "all" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                        )}
                       >
-                        Все калькуляторы
+                        <div className="text-[12px] font-medium leading-4">Все</div>
                       </button>
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("dashboard")}
-                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "dashboard" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
+                        className={cn(
+                          "rounded-[18px] px-3 py-3 text-left transition",
+                          calculatorTopTab === "dashboard" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
+                        )}
                       >
-                        Дашборд
+                        <div className="text-[12px] font-medium leading-4">Дашборд</div>
                       </button>
                     </div>
 
