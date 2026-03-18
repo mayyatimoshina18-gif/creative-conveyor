@@ -2870,7 +2870,7 @@ export default function App() {
                                                 ) : null}
                                               </div>
                                             );
-                                          })}
+                                          })}})}
                                         </div>
                                       ) : null;
                                     })()
@@ -3690,6 +3690,36 @@ export default function App() {
                       type="button"
                       className="w-full rounded-[24px] border border-rose-300/20 bg-rose-300/10 px-5 py-4 text-base font-medium text-rose-200 transition hover:bg-rose-300/15"
                     >
+                      Покинуть креативный конвейер
+                    </button>
+                  </div>
+                ) : activeBottomTab === "profile" ? (
+                  <div className="space-y-4">
+                    <div className="rounded-[24px] border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#56FFEF]">manager profile</div>
+                      <div className="mt-1 text-sm text-white/80">это фронтовый профиль менеджера</div>
+                    </div>
+
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
+                      <div className="text-sm text-white/40">Контакт</div>
+                      <div className="mt-2 text-xl text-white">{createManagerContact || "@manager"}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl bg-black/20 p-3">
+                        <div className="text-xs text-white/40">Задач создано</div>
+                        <div className="mt-2 text-lg font-semibold text-white">{managerTasks.length}</div>
+                      </div>
+
+                      <div className="rounded-2xl bg-black/20 p-3">
+                        <div className="text-xs text-white/40">Активных</div>
+                        <div className="mt-2 text-lg font-semibold text-white">
+                          {managerTasks.filter((t) => !["Оплачена", "Завершена", "Закрыта"].includes(String(t.status || ""))).length}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button className="w-full rounded-[20px] bg-[#56FFEF] py-3 text-black">
                       Покинуть креативный конвейер
                     </button>
                   </div>
