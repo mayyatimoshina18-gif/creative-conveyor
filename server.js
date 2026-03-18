@@ -3341,44 +3341,92 @@ async function bootstrap() {
               return;
             }
 
-            let executorCode = generateExecutorCode();
-            while (Array.from(executors.values()).some(item => item.executorCode === executorCode)) {
+            const normalizedContact = telegramContact.toLowerCase();
+            let existingProfile =
+              (telegramId ? executors.get(telegramId) : null) ||
+              Array.from(executors.values()).find((item) => {
+                const itemContact = String(item.telegramContact || "").trim().toLowerCase();
+                const itemUsername = String(item.username || "").trim().replace(/^@+/, "").toLowerCase();
+                const payloadUsername = String(username || "").trim().replace(/^@+/, "").toLowerCase();
+                return (itemContact && itemContact === normalizedContact) || (payloadUsername && itemUsername === payloadUsername);
+              }) ||
+              null;
+
+            let executorCode = existingProfile?.executorCode || generateExecutorCode();
+            while (!existingProfile && Array.from(executors.values()).some(item => item.executorCode === executorCode)) {
               executorCode = generateExecutorCode();
             }
 
-            const profile = {
-              telegramId,
-              executorCode,
-              username,
-              telegramContact,
-              fullName,
-              specializations,
-              verifiedSpecializations: [],
-              portfolio,
-              paymentMethod,
-              paymentDetails: { type: "text", value: paymentDetailsValue },
-              paymentFile: null,
-              unavailableDays,
-              unavailableTime,
-              status: "На модерации",
-              approvedBy: null,
-              approvedByManagerId: null,
-              reviewAccuracy: null,
-              reviewSpeed: null,
-              reviewAesthetics: null,
-              baseRating: null,
-              newcomerBoost: null,
-              rating: null,
-              completedOrders: 0,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              responseHistory: []
-            };
+            const profile = existingProfile
+              ? {
+                  ...existingProfile,
+                  telegramId: telegramId || existingProfile.telegramId,
+                  executorCode,
+                  username,
+                  telegramContact,
+                  fullName,
+                  specializations,
+                  verifiedSpecializations: [],
+                  portfolio,
+                  paymentMethod,
+                  paymentDetails: { type: "text", value: paymentDetailsValue },
+                  paymentFile: existingProfile.paymentFile || null,
+                  contractData: existingProfile.contractData || null,
+                  paymentInvoices: Array.isArray(existingProfile.paymentInvoices) ? existingProfile.paymentInvoices : [],
+                  unavailableDays,
+                  unavailableTime,
+                  status: "На модерации",
+                  approvedBy: null,
+                  approvedByManagerId: null,
+                  reviewAccuracy: null,
+                  reviewSpeed: null,
+                  reviewAesthetics: null,
+                  baseRating: null,
+                  newcomerBoost: null,
+                  rating: null,
+                  completedOrders: 0,
+                  updatedAt: new Date().toISOString()
+                }
+              : {
+                  telegramId,
+                  executorCode,
+                  username,
+                  telegramContact,
+                  fullName,
+                  specializations,
+                  verifiedSpecializations: [],
+                  portfolio,
+                  paymentMethod,
+                  paymentDetails: { type: "text", value: paymentDetailsValue },
+                  paymentFile: null,
+                  contractData: null,
+                  paymentInvoices: [],
+                  unavailableDays,
+                  unavailableTime,
+                  status: "На модерации",
+                  approvedBy: null,
+                  approvedByManagerId: null,
+                  reviewAccuracy: null,
+                  reviewSpeed: null,
+                  reviewAesthetics: null,
+                  baseRating: null,
+                  newcomerBoost: null,
+                  rating: null,
+                  completedOrders: 0,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  responseHistory: []
+                };
+
+            if (existingProfile && existingProfile.telegramId && profile.telegramId && existingProfile.telegramId !== profile.telegramId) {
+              executors.delete(existingProfile.telegramId);
+              await runQuery(`DELETE FROM executors WHERE telegram_id = $1`, [existingProfile.telegramId]);
+            }
 
             await saveExecutorToDb(profile);
 
-            if (telegramId) {
-              executors.set(telegramId, profile);
+            if (profile.telegramId) {
+              executors.set(profile.telegramId, profile);
             }
 
             notifyManagersAboutExecutor(profile);
@@ -3393,6 +3441,50 @@ async function bootstrap() {
         return;
       }
 
+
+
+      if (req.method === "POST" && req.url === "/api/executors/leave") {
+        let body = "";
+
+        req.on("data", chunk => {
+          body += chunk.toString();
+        });
+
+        req.on("end", async () => {
+          try {
+            const payload = JSON.parse(body || "{}");
+            const telegramId = Number(payload.telegramId || 0);
+            const profile = executors.get(telegramId);
+
+            if (!telegramId || !profile) {
+              sendJson(res, 404, { error: "Executor not found" });
+              return;
+            }
+
+            profile.status = "Удалён";
+            profile.approvedBy = profile.approvedBy || null;
+            profile.approvedByManagerId = profile.approvedByManagerId || null;
+            profile.reviewAccuracy = null;
+            profile.reviewSpeed = null;
+            profile.reviewAesthetics = null;
+            profile.baseRating = null;
+            profile.newcomerBoost = null;
+            profile.rating = null;
+            profile.completedOrders = 0;
+            profile.updatedAt = new Date().toISOString();
+
+            await saveExecutorToDb(profile);
+            executors.set(profile.telegramId, profile);
+
+            sendJson(res, 200, { ok: true });
+          } catch (error) {
+            console.error("POST /api/executors/leave error:", error);
+            sendJson(res, 500, { error: "Failed to leave creative conveyor" });
+          }
+        });
+
+        return;
+      }
 
       if (req.method === "POST" && req.url === "/api/executors/manager-update") {
         let body = "";
