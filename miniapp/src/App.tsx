@@ -2793,53 +2793,58 @@ export default function App() {
                                               ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
                                               : "";
                                             return (
-                                              <button
+                                              <div
                                                 key={`${task.id}-${response.executorId}`}
-                                                type="button"
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault();
+                                                    void openExecutorProfileById(response.executorId);
+                                                  }
+                                                }}
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
-                                                  {rank ? (
-                                                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
-                                                      #{rank} в рейтинге
-                                                    </div>
-                                                  ) : null}
+                                                <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
+                                                  #{rank && rank > 0 ? rank : "—"}
+                                                </div>
 
-                                                  <div className="text-base font-semibold leading-tight text-white">
-                                                    {response.executorName || "Без имени"}
-                                                  </div>
+                                                <div className="text-base font-semibold leading-tight text-white">
+                                                  {response.executorName || "Без имени"}
+                                                </div>
 
-                                                  <div className="mt-2">
-                                                    {telegramLink ? (
-                                                      <a
-                                                        href={telegramLink}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
-                                                      >
-                                                        {response.executorContact}
-                                                      </a>
-                                                    ) : (
-                                                      <div className="text-sm text-white/45">Контакт не указан</div>
-                                                    )}
-                                                  </div>
-
-                                                  {accepted ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(event) => {
-                                                        event.stopPropagation();
-                                                        void handleAssignTask(task.id, response.executorId);
-                                                      }}
-                                                      className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                                                <div className="mt-2">
+                                                  {telegramLink ? (
+                                                    <a
+                                                      href={telegramLink}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      onClick={(event) => event.stopPropagation()}
+                                                      className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
                                                     >
-                                                      Подтвердить
-                                                    </button>
-                                                  ) : null}
-                                                </button>
+                                                      {response.executorContact}
+                                                    </a>
+                                                  ) : (
+                                                    <div className="text-sm text-white/45">Контакт не указан</div>
+                                                  )}
+                                                </div>
+
+                                                {accepted ? (
+                                                  <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      void handleAssignTask(task.id, response.executorId);
+                                                    }}
+                                                    className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
+                                                  >
+                                                    Подтвердить
+                                                  </button>
+                                                ) : null}
+                                              </div>
                                             );
-                                          })}
+                                          })}})}
                                         </div>
                                       ) : null;
                                     })()
