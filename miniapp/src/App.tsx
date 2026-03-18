@@ -639,6 +639,7 @@ export default function App() {
   const [executorFormError, setExecutorFormError] = useState("");
   const [isExecutorSubmitting, setIsExecutorSubmitting] = useState(false);
   const [isExecutorEditing, setIsExecutorEditing] = useState(false);
+  const [isLeavingExecutor, setIsLeavingExecutor] = useState(false);
   const [executorBottomTab, setExecutorBottomTab] = useState<"tasks" | "profile">("tasks");
   const [executorTaskTopTab, setExecutorTaskTopTab] = useState<"new" | "active" | "archived">("new");
   const [executorTasks, setExecutorTasks] = useState<{ available: Task[]; active: Task[]; archived: Task[] }>({ available: [], active: [], archived: [] });
@@ -2185,6 +2186,12 @@ export default function App() {
                   <>
                     {!isExecutorEditing ? (
                       <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Выполнено задач</div><div className="text-2xl font-semibold text-white">{executor?.stats?.completedTasks ?? executor?.completedOrders ?? 0}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Рейтинг</div><div className="text-2xl font-semibold text-white">{typeof executor?.rating === "number" ? executor.rating : "—"}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.averageRevisions === "number" ? executor.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Заработано</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.earnedAmount === "number" ? `${executor.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
+                        </div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Контакт</div><div className="text-white">{executor?.telegramContact || "—"}</div></div>
@@ -2196,7 +2203,28 @@ export default function App() {
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Данные для выплаты</div><div className="text-white whitespace-pre-wrap break-words">{getPaymentDetailsText(executor?.paymentDetails) || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Недоступные дни</div><div className="text-white">{executor?.unavailableDays?.length ? executor.unavailableDays.join(", ") : "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Часы недоступности</div><div className="text-white">{executor?.unavailableTime || "—"}</div></div>
+                        {executor?.paymentInvoices?.length ? (
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Счета</div>
+                            <div className="space-y-2">
+                              {normalizeInvoiceList(executor.paymentInvoices).slice().reverse().map((invoice, index) => (
+                                <div key={`executor-invoice-${index}`} className="rounded-2xl bg-black/20 p-3">
+                                  <div className="text-[11px] text-white/35">{formatDateLabel(invoice.createdAt)}</div>
+                                  <div className="mt-1 break-words text-white"><RenderTextOrLink value={invoice.value || "—"} /></div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        <button
+                          onClick={() => void handleExecutorLeave()}
+                          disabled={isLeavingExecutor}
+                          className="w-full rounded-[24px] border border-rose-300/20 bg-rose-300/10 px-5 py-4 text-base font-medium text-rose-200 transition hover:bg-rose-300/15 disabled:opacity-60"
+                        >
+                          {isLeavingExecutor ? "Удаляю из конвейера..." : "Покинуть креативный конвейер"}
+                        </button>
                         {executorInfo ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{executorInfo}</div> : null}
+                        {executorError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{executorError}</div> : null}
                       </div>
                     ) : (
                       <>
