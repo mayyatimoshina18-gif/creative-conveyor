@@ -885,9 +885,20 @@ export default function App() {
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  const [calculatorTopTab, setCalculatorTopTab] = useState<"new" | "all">("new");
+  const [calculatorTopTab, setCalculatorTopTab] = useState<"new" | "all" | "dashboard">("new");
   const [calculatorTitle, setCalculatorTitle] = useState("");
   const [calculatorInputs, setCalculatorInputs] = useState<Record<CalculatorServiceKey, number>>(emptyCalculatorInputs());
+  const [calculatorRawInputs, setCalculatorRawInputs] = useState<Record<CalculatorServiceKey, string>>({
+    resize_static: "0",
+    resize_animation: "0",
+    resize_gif: "0",
+    resize_html: "0",
+    create_static: "0",
+    create_animation: "0",
+    create_gif: "0",
+    create_html: "0"
+  });
+  const [calculatorValidationError, setCalculatorValidationError] = useState("");
   const [calculatorEntries, setCalculatorEntries] = useState<ManagerCalculatorEntry[]>([]);
   const [calculatorMessage, setCalculatorMessage] = useState("");
   const [pendingCalculatorIdForTask, setPendingCalculatorIdForTask] = useState<string | null>(null);
@@ -1767,9 +1778,77 @@ export default function App() {
   const resetCalculatorForm = () => {
     setCalculatorTitle("");
     setCalculatorInputs(emptyCalculatorInputs());
+    setCalculatorRawInputs({
+      resize_static: "0",
+      resize_animation: "0",
+      resize_gif: "0",
+      resize_html: "0",
+      create_static: "0",
+      create_animation: "0",
+      create_gif: "0",
+      create_html: "0"
+    });
+    setCalculatorValidationError("");
     setCalculatorMessage("");
     setPendingCalculatorIdForTask(null);
   };
+
+  const calculatorHasInvalidInput = useMemo(() => {
+    return CALCULATOR_LINES.some((line) => {
+      const raw = String(calculatorRawInputs[line.key] ?? "").trim();
+      return raw !== "" && !/^\d+$/.test(raw);
+    });
+  }, [calculatorRawInputs]);
+
+  const handleCalculatorInputChange = (key: CalculatorServiceKey, rawValue: string) => {
+    setCalculatorRawInputs((prev) => ({ ...prev, [key]: rawValue }));
+    const trimmed = rawValue.trim();
+
+    if (trimmed === "") {
+      setCalculatorInputs((prev) => ({ ...prev, [key]: 0 }));
+      setCalculatorValidationError("");
+      return;
+    }
+
+    if (!/^\d+$/.test(trimmed)) {
+      setCalculatorValidationError("В калькуляторе можно вводить только натуральные числа");
+      return;
+    }
+
+    setCalculatorValidationError("");
+    setCalculatorInputs((prev) => ({ ...prev, [key]: Number(trimmed) }));
+  };
+
+  const calculatorDashboard = useMemo(() => {
+    const safeEntries = Array.isArray(calculatorEntries) ? calculatorEntries : [];
+    const totals = safeEntries.reduce((acc, entry) => {
+      acc.revenue += Number(entry?.totals?.revenue || 0);
+      acc.manager += Number(entry?.totals?.productionLead || 0);
+      acc.art += Number(entry?.totals?.artDirector || 0);
+      acc.risks += Number(entry?.totals?.risks || 0);
+      acc.support += Number(entry?.totals?.support || 0);
+      acc.net += Number(entry?.totals?.netProfit || 0);
+      acc.owner += Number(entry?.totals?.ownerProfit || 0);
+      acc.investors += Number(entry?.totals?.investorsProfit || 0);
+      return acc;
+    }, { revenue: 0, manager: 0, art: 0, risks: 0, support: 0, net: 0, owner: 0, investors: 0 });
+
+    const byMonthMap = new Map<string, number>();
+    safeEntries.forEach((entry) => {
+      const date = entry?.updatedAt || entry?.createdAt;
+      const d = date ? new Date(date) : new Date();
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      byMonthMap.set(key, (byMonthMap.get(key) || 0) + Number(entry?.totals?.revenue || 0));
+    });
+
+    const byMonth = Array.from(byMonthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, total]) => ({ month, total }));
+
+    const maxMonthTotal = byMonth.reduce((max, item) => Math.max(max, item.total), 0) || 1;
+
+    return { totals, byMonth, maxMonthTotal, count: safeEntries.length };
+  }, [calculatorEntries]);
 
   const calculatedManagerCalculator = useMemo(
     () => calculateManagerCalculator(calculatorInputs),
@@ -1781,17 +1860,33 @@ export default function App() {
   }, [calculatorInputs]);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(CALCULATOR_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setCalculatorEntries(parsed);
+    const loadCalculators = async () => {
+      if (!createManagerContact.trim()) return;
+      try {
+        const response = await fetch(`${API_BASE}/api/calculators?managerContact=${encodeURIComponent(createManagerContact.trim())}`);
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && Array.isArray((data as any)?.calculators)) {
+          setCalculatorEntries((data as any).calculators);
+          return;
+        }
+      } catch (error) {
+        console.error("Failed to load calculators from backend:", error);
       }
-    } catch (error) {
-      console.error("Failed to load calculator registry:", error);
-    }
-  }, []);
+
+      try {
+        const raw = window.localStorage.getItem(CALCULATOR_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setCalculatorEntries(parsed);
+        }
+      } catch (error) {
+        console.error("Failed to load calculator registry:", error);
+      }
+    };
+
+    void loadCalculators();
+  }, [createManagerContact]);
 
   useEffect(() => {
     try {
@@ -1801,7 +1896,7 @@ export default function App() {
     }
   }, [calculatorEntries]);
 
-  const saveCurrentCalculator = (options?: { linkTaskId?: number | null; linkTaskTitle?: string | null; silent?: boolean }) => {
+  const saveCurrentCalculator = async (options?: { linkTaskId?: number | null; linkTaskTitle?: string | null; silent?: boolean }) => {
     const entry: ManagerCalculatorEntry = {
       id: pendingCalculatorIdForTask || `calc-${Date.now()}`,
       title: calculatorTitle.trim() || "Без названия",
@@ -1809,45 +1904,75 @@ export default function App() {
         ? calculatorEntries.find((item) => item.id === pendingCalculatorIdForTask)?.createdAt || new Date().toISOString()
         : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      taskId: options?.linkTaskId ?? null,
-      taskTitle: options?.linkTaskTitle ?? null,
+      taskId: options?.linkTaskId ?? calculatorEntries.find((item) => item.id === pendingCalculatorIdForTask)?.taskId ?? null,
+      taskTitle: options?.linkTaskTitle ?? calculatorEntries.find((item) => item.id === pendingCalculatorIdForTask)?.taskTitle ?? null,
       inputs: { ...calculatorInputs },
       totals: { ...calculatedManagerCalculator.totals }
     };
 
     setCalculatorEntries((prev) => {
-      const existingIndex = prev.findIndex((item) => item.id === entry.id);
-      if (existingIndex >= 0) {
-        const next = [...prev];
-        next[existingIndex] = { ...next[existingIndex], ...entry };
-        return next.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-      }
-      return [entry, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      const next = [entry, ...prev.filter((item) => item.id !== entry.id)];
+      return next;
     });
 
+    try {
+      if (createManagerContact.trim()) {
+        await fetch(`${API_BASE}/api/calculators/save`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            managerContact: createManagerContact.trim(),
+            entry
+          })
+        });
+      }
+    } catch (error) {
+      console.error("Failed to save calculator to backend:", error);
+    }
+
     if (!options?.silent) {
-      setCalculatorMessage(options?.linkTaskId ? "Калькулятор связан с задачей" : "Калькулятор сохранён");
+      setCalculatorMessage("Калькулятор сохранён");
     }
 
     return entry;
   };
 
   const openCalculatorEntry = (entry: ManagerCalculatorEntry) => {
+    const nextInputs = { ...emptyCalculatorInputs(), ...entry.inputs };
     setCalculatorTitle(entry.title || "");
-    setCalculatorInputs({ ...emptyCalculatorInputs(), ...entry.inputs });
+    setCalculatorInputs(nextInputs);
+    setCalculatorRawInputs({
+      resize_static: String(nextInputs.resize_static || 0),
+      resize_animation: String(nextInputs.resize_animation || 0),
+      resize_gif: String(nextInputs.resize_gif || 0),
+      resize_html: String(nextInputs.resize_html || 0),
+      create_static: String(nextInputs.create_static || 0),
+      create_animation: String(nextInputs.create_animation || 0),
+      create_gif: String(nextInputs.create_gif || 0),
+      create_html: String(nextInputs.create_html || 0)
+    });
     setPendingCalculatorIdForTask(entry.id);
     setCalculatorTopTab("new");
     setActiveBottomTab("calculator");
+    setCalculatorValidationError("");
     setCalculatorMessage("");
   };
 
-  const handleSaveCalculatorOnly = () => {
-    saveCurrentCalculator();
+  const handleSaveCalculatorOnly = async () => {
+    if (calculatorHasInvalidInput) {
+      setCalculatorValidationError("Исправь поля калькулятора перед сохранением");
+      return;
+    }
+    await saveCurrentCalculator();
     setCalculatorTopTab("all");
   };
 
-  const handleCreateTaskFromCalculator = () => {
-    const saved = saveCurrentCalculator({ silent: true });
+  const handleCreateTaskFromCalculator = async () => {
+    if (calculatorHasInvalidInput) {
+      setCalculatorValidationError("Исправь поля калькулятора перед созданием задачи");
+      return;
+    }
+    const saved = await saveCurrentCalculator({ silent: true });
     setPendingCalculatorIdForTask(saved.id);
     setCreatePrice(String(Math.round(calculatedManagerCalculator.totals.freelancerTotal || 0)));
     if (!createTitle.trim()) {
@@ -2446,7 +2571,7 @@ export default function App() {
                                     Вы скрыли эту задачу.
                                   </div>
                                 ) : (
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="grid grid-cols-3 gap-2">
                                     <button onClick={() => void handleExecutorTaskDecision(task.id, "accept")} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black">Принять задачу</button>
                                     <button onClick={() => void handleExecutorTaskDecision(task.id, "decline")} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">Скрыть</button>
                                   </div>
@@ -2569,7 +2694,7 @@ export default function App() {
                 <div className="mb-4 flex items-center justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-[0.18em] text-white/35">Креативный конвейер ЛЭНД</div>
-                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : "Задачи"}</div>
+                    <div className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">{activeBottomTab === "create" ? "Создать задачу" : activeBottomTab === "executors" ? "Исполнители" : activeBottomTab === "profile" ? "Профиль" : activeBottomTab === "calculator" ? "Калькулятор" : "Задачи"}</div>
                   </div>
                   <button onClick={() => { if (activeBottomTab === "executors") { void loadPendingExecutors(); void loadApprovedExecutors(); } else if (activeBottomTab === "tasks") { void loadTasks(); void loadManagerTasks(); } }} className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70"><Search className="h-5 w-5" /></button>
                 </div>
@@ -2674,9 +2799,11 @@ export default function App() {
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
-                                                  <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
-                                                    #{rank ? rank : "—"}
-                                                  </div>
+                                                  {rank ? (
+                                                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
+                                                      #{rank} в рейтинге
+                                                    </div>
+                                                  ) : null}
 
                                                   <div className="text-base font-semibold leading-tight text-white">
                                                     {response.executorName || "Без имени"}
@@ -3183,16 +3310,23 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("new")}
-                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
                       >
                         Новый калькулятор
                       </button>
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("all")}
-                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
                       >
                         Все калькуляторы
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCalculatorTopTab("dashboard")}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "dashboard" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
+                      >
+                        Дашборд
                       </button>
                     </div>
 
@@ -3214,14 +3348,25 @@ export default function App() {
                                   <div className="mt-1 text-xs text-white/35">Клиент {formatRubles(line.clientPrice)} · исполнитель {formatRubles(line.freelancerRate)}</div>
                                 </div>
                                 <input
-                                  type="number"
-                                  min="0"
-                                  value={calculatorInputs[line.key] || 0}
-                                  onChange={(e) => {
-                                    const value = Math.max(0, Number(e.target.value || 0));
-                                    setCalculatorInputs((prev) => ({ ...prev, [line.key]: value }));
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={calculatorRawInputs[line.key] ?? "0"}
+                                  onFocus={(e) => {
+                                    if ((calculatorRawInputs[line.key] ?? "0") === "0") {
+                                      setCalculatorRawInputs((prev) => ({ ...prev, [line.key]: "" }));
+                                      e.currentTarget.select();
+                                    }
                                   }}
-                                  className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-right text-base text-white outline-none"
+                                  onBlur={() => {
+                                    const current = String(calculatorRawInputs[line.key] ?? "").trim();
+                                    if (!current) {
+                                      setCalculatorRawInputs((prev) => ({ ...prev, [line.key]: "0" }));
+                                      setCalculatorInputs((prev) => ({ ...prev, [line.key]: 0 }));
+                                    }
+                                  }}
+                                  onChange={(e) => handleCalculatorInputChange(line.key, e.target.value)}
+                                  className="w-full appearance-none rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-right text-base text-white outline-none"
                                 />
                               </div>
                             ))}
@@ -3231,29 +3376,31 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Исполнителю</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.freelancerTotal)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.freelancerTotal)}</div>
                           </div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Менеджер</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.productionLead)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.productionLead)}</div>
                           </div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Арт-директор</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.artDirector)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.artDirector)}</div>
                           </div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Риски</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.risks)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.risks)}</div>
                           </div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Support бюджет</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.support)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.support)}</div>
                           </div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
-                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.netProfit)}</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(calculatedManagerCalculator.totals.netProfit)}</div>
                           </div>
                         </div>
+
+                        {calculatorValidationError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{calculatorValidationError}</div> : null}
 
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                           <div className="mb-3 text-sm text-white/55">Расклад по модели</div>
@@ -3269,7 +3416,7 @@ export default function App() {
                             ].map(([label, value]) => (
                               <div key={String(label)} className="flex items-center justify-between gap-3 rounded-2xl bg-black/20 px-4 py-3 text-white/75">
                                 <div>{label}</div>
-                                <div className="font-medium text-white">{formatRubles(Number(value || 0))}</div>
+                                <div className="font-medium text-white">{calculatorHasInvalidInput ? "Ошибка" : formatRubles(Number(value || 0))}</div>
                               </div>
                             ))}
                           </div>
@@ -3294,7 +3441,7 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                    ) : (
+) : calculatorTopTab === "all" ? (
                       <div className="space-y-3">
                         {calculatorEntries.length ? calculatorEntries.map((entry) => (
                           <div key={entry.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
@@ -3346,6 +3493,34 @@ export default function App() {
                             Пока нет сохранённых калькуляторов
                           </div>
                         )}
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Всего калькуляторов</div><div className="mt-2 text-2xl font-semibold text-white">{calculatorDashboard.count}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Total через менеджера</div><div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.totals.revenue)}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Менеджеру</div><div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.totals.manager)}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Арт-директору</div><div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.totals.art)}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Владельцу</div><div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.totals.owner)}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="text-xs uppercase tracking-[0.16em] text-white/35">Инвесторам</div><div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatorDashboard.totals.investors)}</div></div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                          <div className="mb-3 text-sm text-white/55">Total по месяцам</div>
+                          <div className="space-y-3">
+                            {calculatorDashboard.byMonth.length ? calculatorDashboard.byMonth.map((item) => (
+                              <div key={item.month}>
+                                <div className="mb-1 flex items-center justify-between text-xs text-white/45">
+                                  <span>{item.month}</span>
+                                  <span>{formatRubles(item.total)}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-white/5">
+                                  <div className="h-2 rounded-full bg-[#56FFEF]" style={{ width: `${(item.total / calculatorDashboard.maxMonthTotal) * 100}%` }} />
+                                </div>
+                              </div>
+                            )) : <div className="text-sm text-white/40">Пока нет данных для графика</div>}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
