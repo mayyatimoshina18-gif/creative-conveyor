@@ -2382,9 +2382,8 @@ export default function App() {
                                                 key={`${task.id}-${response.executorId}`}
                                                 type="button"
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
-                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-3 text-left transition hover:border-[#56FFEF]/20"
+                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
-                                                <div className="rounded-[22px] border border-white/10 bg-black/20 p-4">
                                                   {rank ? (
                                                     <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
                                                       #{rank} в рейтинге
@@ -2423,8 +2422,7 @@ export default function App() {
                                                       Подтвердить
                                                     </button>
                                                   ) : null}
-                                                </div>
-                                              </button>
+                                                </button>
                                             );
                                           })}
                                         </div>
