@@ -282,26 +282,6 @@ async function initDb() {
     ON tasks(assigned_executor_id)
   `);
 
-  await runQuery(`
-    CREATE TABLE IF NOT EXISTS manager_calculators (
-      id BIGSERIAL PRIMARY KEY,
-      external_id TEXT UNIQUE NOT NULL,
-      manager_contact TEXT NOT NULL,
-      title TEXT,
-      task_id BIGINT,
-      task_title TEXT,
-      inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
-      totals JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await runQuery(`
-    CREATE INDEX IF NOT EXISTS idx_manager_calculators_manager_contact
-    ON manager_calculators(manager_contact)
-  `);
-
   console.log("Postgres connected and tables initialized");
 }
 
@@ -804,62 +784,6 @@ async function saveTaskToDb(task) {
       response.createdAt || new Date().toISOString()
     ]);
   }
-}
-
-
-async function saveCalculatorEntry(entry, managerContact) {
-  await runQuery(`
-    INSERT INTO manager_calculators (
-      external_id,
-      manager_contact,
-      title,
-      task_id,
-      task_title,
-      inputs,
-      totals,
-      created_at,
-      updated_at
-    )
-    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, NOW())
-    ON CONFLICT (external_id)
-    DO UPDATE SET
-      manager_contact = EXCLUDED.manager_contact,
-      title = EXCLUDED.title,
-      task_id = EXCLUDED.task_id,
-      task_title = EXCLUDED.task_title,
-      inputs = EXCLUDED.inputs,
-      totals = EXCLUDED.totals,
-      updated_at = NOW()
-  `, [
-    entry.id,
-    managerContact,
-    entry.title || null,
-    entry.taskId || null,
-    entry.taskTitle || null,
-    JSON.stringify(entry.inputs || {}),
-    JSON.stringify(entry.totals || {}),
-    entry.createdAt || new Date().toISOString()
-  ]);
-}
-
-async function getCalculatorEntriesByManager(managerContact) {
-  const result = await runQuery(`
-    SELECT *
-    FROM manager_calculators
-    WHERE manager_contact = $1
-    ORDER BY updated_at DESC, created_at DESC
-  `, [managerContact]);
-
-  return result.rows.map((row) => ({
-    id: row.external_id,
-    title: row.title || "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    taskId: row.task_id ? Number(row.task_id) : null,
-    taskTitle: row.task_title || null,
-    inputs: row.inputs || {},
-    totals: row.totals || {}
-  }));
 }
 
 /* -------------------- Telegram utils -------------------- */
@@ -3770,60 +3694,7 @@ async function bootstrap() {
         return;
       }
 
-      
-      if (req.method === "GET" && req.url.startsWith("/api/calculators")) {
-        try {
-          const url = new URL(req.url, "http://localhost");
-          const managerContact = String(url.searchParams.get("managerContact") || "").trim();
-
-          if (!managerContact) {
-            return sendJson(res, 400, { error: "managerContact is required" });
-          }
-
-          const calculators = await getCalculatorEntriesByManager(managerContact);
-          return sendJson(res, 200, { ok: true, calculators });
-        } catch (error) {
-          console.error("GET /api/calculators error:", error);
-          return sendJson(res, 500, { error: "Failed to load calculators" });
-        }
-      }
-
-      if (req.method === "POST" && req.url === "/api/calculators/save") {
-        let body = "";
-
-        req.on("data", chunk => {
-          body += chunk.toString();
-        });
-
-        req.on("end", async () => {
-          try {
-            const payload = JSON.parse(body || "{}");
-            const managerContact = String(payload.managerContact || "").trim();
-            const entry = payload.entry || null;
-
-            if (!managerContact) {
-              sendJson(res, 400, { error: "managerContact is required" });
-              return;
-            }
-
-            if (!entry || !entry.id) {
-              sendJson(res, 400, { error: "entry.id is required" });
-              return;
-            }
-
-            await saveCalculatorEntry(entry, managerContact);
-            const calculators = await getCalculatorEntriesByManager(managerContact);
-            sendJson(res, 200, { ok: true, calculators });
-          } catch (error) {
-            console.error("POST /api/calculators/save error:", error);
-            sendJson(res, 500, { error: "Failed to save calculator" });
-          }
-        });
-
-        return;
-      }
-
-    if (req.method === "POST" && req.url === "/api/tasks") {
+      if (req.method === "POST" && req.url === "/api/tasks") {
         let body = "";
 
         req.on("data", chunk => {
@@ -3848,8 +3719,6 @@ const sources = payload.sources ? String(payload.sources) : null;
 const refsData = payload.refs_data ? String(payload.refs_data) : null;
 const deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget) : null;
 const comment = payload.comment ? String(payload.comment) : null;
-const calculatorId = payload.calculatorId ? String(payload.calculatorId).trim() : null;
-const calculatorTitle = payload.calculatorTitle ? String(payload.calculatorTitle).trim() : null;
 
             if (!title) {
               sendJson(res, 400, { error: "Title is required" });
@@ -3933,19 +3802,6 @@ comment,
 
             await saveTaskToDb(newTask);
             tasks.push(newTask);
-
-            if (calculatorId) {
-              await saveCalculatorEntry({
-                id: calculatorId,
-                title: calculatorTitle || title,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                taskId: newTask.id,
-                taskTitle: newTask.title,
-                inputs: payload.calculatorInputs || {},
-                totals: payload.calculatorTotals || {}
-              }, managerContact);
-            }
 
             sendJson(res, 201, {
               ok: true,
