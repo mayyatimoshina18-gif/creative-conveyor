@@ -106,6 +106,163 @@ const DAY_OPTIONS = [
 ];
 const PAYMENT_OPTIONS = ["Самозанятость", "ИП", "Переводом"];
 
+type CalculatorServiceKey =
+  | "resize_static"
+  | "resize_animation"
+  | "resize_gif"
+  | "resize_html"
+  | "create_static"
+  | "create_animation"
+  | "create_gif"
+  | "create_html";
+
+type CalculatorLine = {
+  key: CalculatorServiceKey;
+  label: string;
+  clientPrice: number;
+  freelancerRate: number;
+};
+
+type ManagerCalculatorEntry = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  taskId?: number | null;
+  taskTitle?: string | null;
+  inputs: Record<CalculatorServiceKey, number>;
+  totals: {
+    revenue: number;
+    freelancerTotal: number;
+    theoreticalBase: number;
+    roundingEffect: number;
+    productionLead: number;
+    artDirector: number;
+    risks: number;
+    support: number;
+    profitPool: number;
+    bonuses: number;
+    bonusTaxes: number;
+    profitTax: number;
+    netProfit: number;
+    ownerProfit: number;
+    investorsProfit: number;
+  };
+};
+
+const CALCULATOR_LINES: CalculatorLine[] = [
+  { key: "resize_static", label: "Ресайз статика", clientPrice: 300, freelancerRate: 110 },
+  { key: "resize_animation", label: "Ресайз анимация", clientPrice: 700, freelancerRate: 260 },
+  { key: "resize_gif", label: "Ресайз gif", clientPrice: 350, freelancerRate: 130 },
+  { key: "resize_html", label: "Ресайз html", clientPrice: 450, freelancerRate: 170 },
+  { key: "create_static", label: "Создание статичного креатива", clientPrice: 1300, freelancerRate: 490 },
+  { key: "create_animation", label: "Создание анимированного креатива", clientPrice: 3300, freelancerRate: 1250 },
+  { key: "create_gif", label: "Создание gif креатива", clientPrice: 1600, freelancerRate: 600 },
+  { key: "create_html", label: "Создание html креатива", clientPrice: 2500, freelancerRate: 940 }
+];
+
+const CALCULATOR_SETTINGS = {
+  supportPercent: 0.1,
+  riskPercent: 0.1,
+  productionLeadPercent: 0.1,
+  artDirectorPercent: 0.1,
+  bonusPercent: 0.1,
+  bonusTaxesPercent: 0.006,
+  targetNetProfitPercent: 0.2365,
+  profitTaxPercent: 0.0575
+};
+
+const CALCULATOR_STORAGE_KEY = "creative-conveyor-manager-calculators-v1";
+
+function formatRubles(value: number) {
+  return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
+}
+
+function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
+  return {
+    resize_static: 0,
+    resize_animation: 0,
+    resize_gif: 0,
+    resize_html: 0,
+    create_static: 0,
+    create_animation: 0,
+    create_gif: 0,
+    create_html: 0
+  };
+}
+
+function getCalculatorTitle(entry: ManagerCalculatorEntry) {
+  return entry.title?.trim() || "Калькулятор без названия";
+}
+
+function calculateManagerCalculator(inputs: Record<CalculatorServiceKey, number>) {
+  const marginalLayer =
+    CALCULATOR_SETTINGS.bonusPercent +
+    CALCULATOR_SETTINGS.bonusTaxesPercent +
+    CALCULATOR_SETTINGS.targetNetProfitPercent +
+    CALCULATOR_SETTINGS.profitTaxPercent;
+
+  const lineDetails = CALCULATOR_LINES.map((line) => {
+    const quantity = Number(inputs[line.key] || 0);
+    const revenue = line.clientPrice * quantity;
+    const maxRate = Math.round(
+      (line.clientPrice * (1 - CALCULATOR_SETTINGS.supportPercent - marginalLayer)) /
+        ((1 + CALCULATOR_SETTINGS.riskPercent) *
+          (1 + CALCULATOR_SETTINGS.productionLeadPercent + CALCULATOR_SETTINGS.artDirectorPercent))
+    );
+    const theoretical = maxRate * quantity;
+    const freelancerTotal = line.freelancerRate * quantity;
+    const roundingEffect = theoretical - freelancerTotal;
+
+    return {
+      ...line,
+      quantity,
+      revenue,
+      maxRate,
+      theoretical,
+      freelancerTotal,
+      roundingEffect
+    };
+  });
+
+  const revenue = lineDetails.reduce((sum, line) => sum + line.revenue, 0);
+  const freelancerTotal = lineDetails.reduce((sum, line) => sum + line.freelancerTotal, 0);
+  const theoreticalBase = lineDetails.reduce((sum, line) => sum + line.theoretical, 0);
+  const roundingEffect = theoreticalBase - freelancerTotal;
+  const productionLead = theoreticalBase * CALCULATOR_SETTINGS.productionLeadPercent;
+  const artDirector = theoreticalBase * CALCULATOR_SETTINGS.artDirectorPercent;
+  const risks = (theoreticalBase + productionLead + artDirector) * CALCULATOR_SETTINGS.riskPercent;
+  const support = revenue * CALCULATOR_SETTINGS.supportPercent;
+  const profitPool = revenue - freelancerTotal - productionLead - artDirector - risks - support;
+  const bonuses = revenue * CALCULATOR_SETTINGS.bonusPercent;
+  const bonusTaxes = revenue * CALCULATOR_SETTINGS.bonusTaxesPercent;
+  const profitTax = revenue * CALCULATOR_SETTINGS.profitTaxPercent;
+  const netProfit = profitPool - bonuses - bonusTaxes - profitTax;
+  const ownerProfit = netProfit * 0.2;
+  const investorsProfit = netProfit * 0.8;
+
+  return {
+    lines: lineDetails,
+    totals: {
+      revenue,
+      freelancerTotal,
+      theoreticalBase,
+      roundingEffect,
+      productionLead,
+      artDirector,
+      risks,
+      support,
+      profitPool,
+      bonuses,
+      bonusTaxes,
+      profitTax,
+      netProfit,
+      ownerProfit,
+      investorsProfit
+    }
+  };
+}
+
 const topTabs = [
   { key: "waiting", label: "Ждут исполнителя", icon: CircleDot },
   { key: "active", label: "Активные", icon: Clock3 },
@@ -728,6 +885,13 @@ export default function App() {
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
+  const [calculatorTopTab, setCalculatorTopTab] = useState<"new" | "all">("new");
+  const [calculatorTitle, setCalculatorTitle] = useState("");
+  const [calculatorInputs, setCalculatorInputs] = useState<Record<CalculatorServiceKey, number>>(emptyCalculatorInputs());
+  const [calculatorEntries, setCalculatorEntries] = useState<ManagerCalculatorEntry[]>([]);
+  const [calculatorMessage, setCalculatorMessage] = useState("");
+  const [pendingCalculatorIdForTask, setPendingCalculatorIdForTask] = useState<string | null>(null);
+
   useEffect(() => {
     const telegram = (window as any)?.Telegram?.WebApp;
     telegram?.ready?.();
@@ -795,6 +959,19 @@ export default function App() {
       ...(managerTasks || [])
     ];
   }, [tasksData, managerTasks]);
+
+  const openTaskFromCalculator = (taskId?: number | null) => {
+    if (!taskId) return;
+
+    const targetTask = allManagerKnownTasks.find((task) => Number(task.id) === Number(taskId)) || null;
+    if (targetTask) {
+      setSelectedTask(targetTask);
+      setActiveBottomTab("tasks");
+      return;
+    }
+
+    setManagerTasksError("Связанная задача не найдена");
+  };
 
   const enrichExecutorProfileWithLocalStats = (profile: ExecutorProfile | null) => {
     if (!profile?.telegramId) return profile;
@@ -1587,6 +1764,107 @@ export default function App() {
     }
   };
 
+  const resetCalculatorForm = () => {
+    setCalculatorTitle("");
+    setCalculatorInputs(emptyCalculatorInputs());
+    setCalculatorMessage("");
+    setPendingCalculatorIdForTask(null);
+  };
+
+  const calculatedManagerCalculator = useMemo(
+    () => calculateManagerCalculator(calculatorInputs),
+    [calculatorInputs]
+  );
+
+  const calculatorSpecializationSuggestions = useMemo(() => {
+    return CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0).map((line) => line.label);
+  }, [calculatorInputs]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CALCULATOR_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setCalculatorEntries(parsed);
+      }
+    } catch (error) {
+      console.error("Failed to load calculator registry:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CALCULATOR_STORAGE_KEY, JSON.stringify(calculatorEntries));
+    } catch (error) {
+      console.error("Failed to persist calculator registry:", error);
+    }
+  }, [calculatorEntries]);
+
+  const saveCurrentCalculator = (options?: { linkTaskId?: number | null; linkTaskTitle?: string | null; silent?: boolean }) => {
+    const entry: ManagerCalculatorEntry = {
+      id: pendingCalculatorIdForTask || `calc-${Date.now()}`,
+      title: calculatorTitle.trim() || "Без названия",
+      createdAt: pendingCalculatorIdForTask
+        ? calculatorEntries.find((item) => item.id === pendingCalculatorIdForTask)?.createdAt || new Date().toISOString()
+        : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      taskId: options?.linkTaskId ?? null,
+      taskTitle: options?.linkTaskTitle ?? null,
+      inputs: { ...calculatorInputs },
+      totals: { ...calculatedManagerCalculator.totals }
+    };
+
+    setCalculatorEntries((prev) => {
+      const existingIndex = prev.findIndex((item) => item.id === entry.id);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = { ...next[existingIndex], ...entry };
+        return next.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      }
+      return [entry, ...prev].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    });
+
+    if (!options?.silent) {
+      setCalculatorMessage(options?.linkTaskId ? "Калькулятор связан с задачей" : "Калькулятор сохранён");
+    }
+
+    return entry;
+  };
+
+  const openCalculatorEntry = (entry: ManagerCalculatorEntry) => {
+    setCalculatorTitle(entry.title || "");
+    setCalculatorInputs({ ...emptyCalculatorInputs(), ...entry.inputs });
+    setPendingCalculatorIdForTask(entry.id);
+    setCalculatorTopTab("new");
+    setActiveBottomTab("calculator");
+    setCalculatorMessage("");
+  };
+
+  const handleSaveCalculatorOnly = () => {
+    saveCurrentCalculator();
+    setCalculatorTopTab("all");
+  };
+
+  const handleCreateTaskFromCalculator = () => {
+    const saved = saveCurrentCalculator({ silent: true });
+    setPendingCalculatorIdForTask(saved.id);
+    setCreatePrice(String(Math.round(calculatedManagerCalculator.totals.freelancerTotal || 0)));
+    if (!createTitle.trim()) {
+      setCreateTitle((calculatorTitle || "Задача из калькулятора").trim());
+    }
+    if (!createCategories.length) {
+      const inferred = CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0)
+        .map((line) => line.label)
+        .filter((item) => SPECIALIZATION_OPTIONS.includes(item));
+      if (inferred.length) {
+        setCreateCategories(Array.from(new Set(inferred)));
+      }
+    }
+    setCalculatorMessage("Стоимость исполнителя перенесена в создание задачи");
+    setActiveBottomTab("create");
+  };
+
   const resetCreateForm = () => {
     setCreateTitle("");
     setCreateCategories([]);
@@ -1664,7 +1942,19 @@ export default function App() {
         throw new Error(data?.error || "Failed to create task");
       }
 
+      const createdTaskId = Number(data?.task?.id || 0) || null;
+      const createdTaskTitle = String(data?.task?.title || createTitle.trim() || "Задача");
+
+      if (pendingCalculatorIdForTask || activeBottomTab === "create") {
+        saveCurrentCalculator({
+          linkTaskId: createdTaskId,
+          linkTaskTitle: createdTaskTitle,
+          silent: true
+        });
+      }
+
       resetCreateForm();
+      setPendingCalculatorIdForTask(null);
       setCreateSuccess("Задача создана");
       await loadTasks();
       setActiveBottomTab("tasks");
@@ -2384,43 +2674,45 @@ export default function App() {
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
-                                                <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
-                                                  #{rank && rank > 0 ? rank : "—"}
-                                                </div>
+                                                  {rank ? (
+                                                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
+                                                      #{rank} в рейтинге
+                                                    </div>
+                                                  ) : null}
 
-                                                <div className="text-base font-semibold leading-tight text-white">
-                                                  {response.executorName || "Без имени"}
-                                                </div>
+                                                  <div className="text-base font-semibold leading-tight text-white">
+                                                    {response.executorName || "Без имени"}
+                                                  </div>
 
-                                                <div className="mt-2">
-                                                  {telegramLink ? (
-                                                    <a
-                                                      href={telegramLink}
-                                                      target="_blank"
-                                                      rel="noreferrer"
-                                                      onClick={(event) => event.stopPropagation()}
-                                                      className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
+                                                  <div className="mt-2">
+                                                    {telegramLink ? (
+                                                      <a
+                                                        href={telegramLink}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        className="text-sm text-white/50 underline-offset-4 transition hover:text-[#56FFEF] hover:underline"
+                                                      >
+                                                        {response.executorContact}
+                                                      </a>
+                                                    ) : (
+                                                      <div className="text-sm text-white/45">Контакт не указан</div>
+                                                    )}
+                                                  </div>
+
+                                                  {accepted ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void handleAssignTask(task.id, response.executorId);
+                                                      }}
+                                                      className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
                                                     >
-                                                      {response.executorContact}
-                                                    </a>
-                                                  ) : (
-                                                    <div className="text-sm text-white/45">Контакт не указан</div>
-                                                  )}
-                                                </div>
-
-                                                {accepted ? (
-                                                  <button
-                                                    type="button"
-                                                    onClick={(event) => {
-                                                      event.stopPropagation();
-                                                      void handleAssignTask(task.id, response.executorId);
-                                                    }}
-                                                    className="mt-4 w-full rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black"
-                                                  >
-                                                    Подтвердить
-                                                  </button>
-                                                ) : null}
-                                              </button>
+                                                      Подтвердить
+                                                    </button>
+                                                  ) : null}
+                                                </button>
                                             );
                                           })}
                                         </div>
@@ -2886,6 +3178,178 @@ export default function App() {
                     {createError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{createError}</div> : null}
                     {createSuccess ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{createSuccess}</div> : null}
                     <button onClick={handleCreateTask} disabled={isCreating} className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95 disabled:opacity-60">{isCreating ? "Создаю..." : "Создать задачу"}</button>
+                  </div>
+                ) : activeBottomTab === "calculator" ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCalculatorTopTab("new")}
+                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
+                      >
+                        Новый калькулятор
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCalculatorTopTab("all")}
+                        className={cn("rounded-[20px] border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/60")}
+                      >
+                        Все калькуляторы
+                      </button>
+                    </div>
+
+                    {calculatorTopTab === "new" ? (
+                      <div className="space-y-4">
+                        <FormInput
+                          value={calculatorTitle}
+                          onChange={(e) => setCalculatorTitle(e.target.value)}
+                          placeholder="Название калькулятора / проекта"
+                        />
+
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                          <div className="mb-3 text-sm text-white/55">Количество по типам задач</div>
+                          <div className="space-y-3">
+                            {CALCULATOR_LINES.map((line) => (
+                              <div key={line.key} className="grid grid-cols-[1fr_104px] items-center gap-3 rounded-2xl bg-black/20 p-3">
+                                <div>
+                                  <div className="text-sm font-medium text-white">{line.label}</div>
+                                  <div className="mt-1 text-xs text-white/35">Клиент {formatRubles(line.clientPrice)} · исполнитель {formatRubles(line.freelancerRate)}</div>
+                                </div>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={calculatorInputs[line.key] || 0}
+                                  onChange={(e) => {
+                                    const value = Math.max(0, Number(e.target.value || 0));
+                                    setCalculatorInputs((prev) => ({ ...prev, [line.key]: value }));
+                                  }}
+                                  className="w-full rounded-[18px] border border-white/10 bg-white/5 px-4 py-3 text-right text-base text-white outline-none"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Исполнителю</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.freelancerTotal)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Менеджер</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.productionLead)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Арт-директор</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.artDirector)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Риски</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.risks)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Support бюджет</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.support)}</div>
+                          </div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
+                            <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(calculatedManagerCalculator.totals.netProfit)}</div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                          <div className="mb-3 text-sm text-white/55">Расклад по модели</div>
+                          <div className="space-y-2 text-sm">
+                            {[
+                              ["Счёт клиенту", calculatedManagerCalculator.totals.revenue],
+                              ["Пул прибыли", calculatedManagerCalculator.totals.profitPool],
+                              ["Бонусы сотрудникам", calculatedManagerCalculator.totals.bonuses],
+                              ["Налоги на бонусы", calculatedManagerCalculator.totals.bonusTaxes],
+                              ["Налог на прибыль", calculatedManagerCalculator.totals.profitTax],
+                              ["20% владельцу", calculatedManagerCalculator.totals.ownerProfit],
+                              ["80% инвесторам", calculatedManagerCalculator.totals.investorsProfit]
+                            ].map(([label, value]) => (
+                              <div key={String(label)} className="flex items-center justify-between gap-3 rounded-2xl bg-black/20 px-4 py-3 text-white/75">
+                                <div>{label}</div>
+                                <div className="font-medium text-white">{formatRubles(Number(value || 0))}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {calculatorMessage ? <div className="rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">{calculatorMessage}</div> : null}
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={handleSaveCalculatorOnly}
+                            className="w-full rounded-[24px] border border-white/10 bg-white/5 px-5 py-4 text-base font-medium text-white transition hover:bg-white/10"
+                          >
+                            Сохранить калькулятор
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCreateTaskFromCalculator}
+                            className="w-full rounded-[24px] bg-[#56FFEF] px-5 py-4 text-base font-medium text-black transition hover:brightness-95"
+                          >
+                            Сформировать задачу
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {calculatorEntries.length ? calculatorEntries.map((entry) => (
+                          <div key={entry.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-base font-semibold text-white">{getCalculatorTitle(entry)}</div>
+                                <div className="mt-1 text-xs text-white/40">{formatDateLabel(entry.updatedAt) || "Без даты"}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openCalculatorEntry(entry)}
+                                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/75"
+                              >
+                                Открыть
+                              </button>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                              <div className="rounded-2xl bg-black/20 p-3">
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Исполнителю</div>
+                                <div className="text-white">{formatRubles(entry.totals.freelancerTotal)}</div>
+                              </div>
+                              <div className="rounded-2xl bg-black/20 p-3">
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Чистая прибыль</div>
+                                <div className="text-white">{formatRubles(entry.totals.netProfit)}</div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-black/20 p-3">
+                              <div>
+                                <div className="text-[11px] uppercase tracking-[0.16em] text-white/35">Связанная задача</div>
+                                <div className="mt-1 text-sm text-white/75">
+                                  {entry.taskId ? `#${entry.taskId}${entry.taskTitle ? ` · ${entry.taskTitle}` : ""}` : "Пока не привязан"}
+                                </div>
+                              </div>
+                              {entry.taskId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openTaskFromCalculator(entry.taskId)}
+                                  className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-xs text-[#56FFEF]"
+                                >
+                                  Открыть задачу
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="flex h-[40vh] items-center justify-center rounded-[24px] border border-white/10 bg-white/[0.04] px-6 text-center text-white/40">
+                            Пока нет сохранённых калькуляторов
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center text-white/40">Экран «{bottomTabs.find((item) => item.key === activeBottomTab)?.label}» будет следующим шагом.</div>
