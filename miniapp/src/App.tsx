@@ -2385,6 +2385,12 @@ export default function App() {
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-3 text-left transition hover:border-[#56FFEF]/20"
                                               >
                                                 <div className="rounded-[22px] border border-white/10 bg-black/20 p-4">
+                                                  {rank ? (
+                                                    <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-white/65">
+                                                      #{rank} в рейтинге
+                                                    </div>
+                                                  ) : null}
+
                                                   <div className="text-base font-semibold leading-tight text-white">
                                                     {response.executorName || "Без имени"}
                                                   </div>
@@ -2403,15 +2409,6 @@ export default function App() {
                                                     ) : (
                                                       <div className="text-sm text-white/45">Контакт не указан</div>
                                                     )}
-                                                  </div>
-
-                                                  <div className="mt-4 grid grid-cols-2 gap-2">
-                                                    <div className="rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
-                                                      Рейтинг {response.rating != null ? response.rating : "—"}
-                                                    </div>
-                                                    <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/65">
-                                                      {rank ? `#${rank} в рейтинге` : "Без места"}
-                                                    </div>
                                                   </div>
 
                                                   {accepted ? (
