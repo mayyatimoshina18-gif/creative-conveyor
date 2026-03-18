@@ -2385,7 +2385,7 @@ export default function App() {
                                                 className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
                                                 <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
-                                                  {rank && rank > 0 ? `#${rank} в рейтинге` : (response.rating != null ? `Рейтинг ${response.rating}` : "Без рейтинга")}
+                                                  #{rank && rank > 0 ? rank : "—"}
                                                 </div>
 
                                                 <div className="text-base font-semibold leading-tight text-white">
