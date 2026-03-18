@@ -2870,7 +2870,7 @@ export default function App() {
                                                 ) : null}
                                               </div>
                                             );
-                                          })}})}
+                                          })}
                                         </div>
                                       ) : null;
                                     })()
