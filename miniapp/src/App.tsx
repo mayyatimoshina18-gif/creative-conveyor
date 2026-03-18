@@ -1850,6 +1850,44 @@ export default function App() {
     }
   };
 
+  const handleExecutorLeave = async () => {
+    if (!executor?.telegramId || isLeavingExecutor) return;
+
+    const confirmed = window.confirm("Покинуть креативный конвейер? Вы исчезнете из активной базы и рейтинга. Позже можно зарегистрироваться заново, но рейтинг не восстановится.");
+    if (!confirmed) return;
+
+    try {
+      setIsLeavingExecutor(true);
+      setExecutorInfo("");
+      setExecutorError("");
+      const response = await fetch(`${API_BASE}/api/executors/leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telegramId: executor.telegramId })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || "Failed to leave creative conveyor");
+      }
+
+      setExecutor(null);
+      setExecutorCode("");
+      setExecutorInfo("");
+      setExecutorError("");
+      setExecutorTasks({ available: [], active: [], archived: [] });
+      setExecutorTasksError("");
+      setExecutorBottomTab("tasks");
+      setExecutorTaskTopTab("new");
+      setScreen("welcome");
+    } catch (error) {
+      console.error("Failed to leave creative conveyor:", error);
+      setExecutorError(error instanceof Error ? error.message : "Не удалось покинуть креативный конвейер");
+    } finally {
+      setIsLeavingExecutor(false);
+    }
+  };
+
+
   const renderExecutorForm = (submitLabel: string, onSubmit: () => void, includeBack = true) => (
     <>
       {includeBack ? (
