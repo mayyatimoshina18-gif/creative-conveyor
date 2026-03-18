@@ -1348,6 +1348,22 @@ function calculateExecutorStats(executorTelegramId) {
   };
 }
 
+function enrichExecutor(executor) {
+  if (!executor) return executor;
+
+  const stats = calculateExecutorStats(executor.telegramId);
+
+  return {
+    ...executor,
+    completedOrders: stats.completedTasks,
+    stats: {
+      completedTasks: stats.completedTasks,
+      averageRevisions: stats.averageRevisions,
+      earnedAmount: stats.earnedAmount
+    }
+  };
+}
+
 function mapTaskForMiniapp(task) {
   return {
     id: task.id,
@@ -3200,16 +3216,7 @@ async function bootstrap() {
 
             await ensureExecutorCodeForProfile(profile);
 
-            const stats = calculateExecutorStats(profile.telegramId);
-            const executorWithStats = {
-              ...profile,
-              completedOrders: stats.completedTasks,
-              stats: {
-                completedTasks: stats.completedTasks,
-                averageRevisions: stats.averageRevisions,
-                earnedAmount: stats.earnedAmount
-              }
-            };
+            const executorWithStats = enrichExecutor(profile);
 
             sendJson(res, 200, { ok: true, executor: executorWithStats });
           } catch (error) {
