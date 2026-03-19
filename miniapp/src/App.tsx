@@ -677,6 +677,12 @@ function TaskDetailModal({
           </div>
         ) : null}
 
+        {task.deadlineHistory?.length ? (
+          <div className="mb-4 rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
+            Новый дедлайн: {task.deadline || "—"}
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div><div>{task.deadline || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Стоимость</div><div>{task.price || "—"}</div></div>
@@ -1012,6 +1018,7 @@ export default function App() {
   const [createDeadlineTime, setCreateDeadlineTime] = useState("");
   const [createPrice, setCreatePrice] = useState("");
   const [createManagerContact, setCreateManagerContact] = useState("");
+  const [currentManagerTelegramId, setCurrentManagerTelegramId] = useState<number | null>(null);
   const [createSources, setCreateSources] = useState("");
   const [createRefs, setCreateRefs] = useState("");
   const [createDeliveryTarget, setCreateDeliveryTarget] = useState("");
@@ -1044,6 +1051,8 @@ export default function App() {
     telegram?.ready?.();
 
     const username = telegram?.initDataUnsafe?.user?.username;
+    const telegramId = Number(telegram?.initDataUnsafe?.user?.id || 0) || null;
+    setCurrentManagerTelegramId(telegramId);
     if (username) {
       setCreateManagerContact(`@${username}`);
       setExecutorContact(`@${username}`);
@@ -1913,7 +1922,7 @@ export default function App() {
           : "Исполнитель отклонён"
       );
 
-      await loadPendingExecutors();
+      await Promise.allSettled([loadPendingExecutors(), loadApprovedExecutors()]);
     } catch (error) {
       console.error("Failed to moderate executor:", error);
       setModerationMessage("Не удалось сохранить решение");
@@ -2013,7 +2022,9 @@ export default function App() {
     const approvedByMe = approvedExecutors.filter((executor) => {
       const approvedByRaw = String(executor.approvedBy || "").trim();
       const approvedByNormalized = approvedByRaw.replace(/^@+/, "").toLowerCase();
-      return approvedByNormalized && approvedByNormalized === normalizedContact;
+      const byContact = approvedByNormalized && approvedByNormalized === normalizedContact;
+      const byManagerId = currentManagerTelegramId && Number(executor.approvedByManagerId || 0) === Number(currentManagerTelegramId);
+      return Boolean(byContact || byManagerId);
     });
 
     return {
@@ -2025,7 +2036,7 @@ export default function App() {
       approvedCount: approvedByMe.length,
       approvedExecutors: approvedByMe
     };
-  }, [createManagerContact, managerTasks, approvedExecutors]);
+  }, [createManagerContact, currentManagerTelegramId, managerTasks, approvedExecutors]);
 
   const calculatedManagerCalculator = useMemo(
     () => calculateManagerCalculator(calculatorInputs),
@@ -2232,13 +2243,14 @@ export default function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "Failed to update task");
 
+      const updatedTask = (data as any)?.task || null;
       setEditingTaskId(null);
       setEditTaskDeadlineClientFault(false);
       setEditTaskDeadlineReworkMode(false);
-      await Promise.allSettled([loadTasks(), loadManagerTasks()]);
-      if (selectedTask?.id === editingTaskId) {
-        setSelectedTask((data as any)?.task || null);
+      if (selectedTask?.id === editingTaskId && updatedTask) {
+        setSelectedTask(updatedTask);
       }
+      await Promise.allSettled([loadTasks(), loadManagerTasks()]);
     } catch (error) {
       console.error("Failed to update task:", error);
       setEditTaskError("Не удалось сохранить задачу");
