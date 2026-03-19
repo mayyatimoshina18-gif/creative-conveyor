@@ -59,6 +59,9 @@ type Task = {
   deadlineExpired?: boolean;
   deadlineMissedMarked?: boolean;
   deadlinePenaltyPercent?: number | null;
+  deadlineHistory?: Array<{ value?: string; createdAt?: string }> | null;
+  deadlineChangeCount?: number;
+  deadlineClientChangeCount?: number;
 };
 
 type TasksResponse = {
@@ -937,6 +940,8 @@ export default function App() {
   const [editTaskRefs, setEditTaskRefs] = useState("");
   const [editTaskDeliveryTarget, setEditTaskDeliveryTarget] = useState("");
   const [editTaskComment, setEditTaskComment] = useState("");
+  const [editTaskDeadlineClientFault, setEditTaskDeadlineClientFault] = useState(false);
+  const [editTaskDeadlineReworkMode, setEditTaskDeadlineReworkMode] = useState(false);
   const [editTaskError, setEditTaskError] = useState("");
   const [editTaskLoading, setEditTaskLoading] = useState(false);
 
@@ -1601,11 +1606,7 @@ export default function App() {
   };
 
   const handleDeadlineRework = async (task: Task) => {
-    const updatedTask = await handleManagerStageAction(task.id, "deadlineRework");
-    openTaskEditor({
-      ...task,
-      ...(updatedTask || {})
-    });
+    openTaskEditor(task, { deadlineRework: true });
   };
 
   const submitFixes = async () => {
@@ -2148,7 +2149,7 @@ export default function App() {
     setActiveBottomTab("create");
   };
 
-  const openTaskEditor = (task: Task) => {
+  const openTaskEditor = (task: Task, options?: { deadlineRework?: boolean }) => {
     setEditingTaskId(task.id);
     setEditTaskTitle(task.title || "");
     setEditTaskCategories(Array.isArray(task.type) ? task.type : []);
@@ -2159,6 +2160,8 @@ export default function App() {
     setEditTaskRefs(task.refsText || "");
     setEditTaskDeliveryTarget(task.deliveryTarget || "");
     setEditTaskComment(task.comment || "");
+    setEditTaskDeadlineClientFault(false);
+    setEditTaskDeadlineReworkMode(Boolean(options?.deadlineRework));
     setEditTaskError("");
   };
 
@@ -2204,7 +2207,9 @@ export default function App() {
           sources: editTaskSources.trim() || null,
           refs_data: editTaskRefs.trim() || null,
           deliveryTarget: editTaskDeliveryTarget.trim() || null,
-          comment: editTaskComment.trim() || null
+          comment: editTaskComment.trim() || null,
+          deadlineRework: editTaskDeadlineReworkMode,
+          deadlineClientFault: editTaskDeadlineClientFault
         })
       });
 
@@ -2212,6 +2217,8 @@ export default function App() {
       if (!response.ok) throw new Error((data as any)?.error || "Failed to update task");
 
       setEditingTaskId(null);
+      setEditTaskDeadlineClientFault(false);
+      setEditTaskDeadlineReworkMode(false);
       await Promise.allSettled([loadTasks(), loadManagerTasks()]);
       if (selectedTask?.id === editingTaskId) {
         setSelectedTask((data as any)?.task || null);
@@ -3927,7 +3934,31 @@ export default function App() {
                       <div className="rounded-2xl bg-black/20 p-3">
                         <div className="text-xs text-white/40">Активных</div>
                         <div className="mt-2 text-lg font-semibold text-white">
-                          {managerTasks.filter((t) => !["Оплачена", "Завершена", "Закрыта"].includes(String(t.status || ""))).length}
+                          {managerTasks.filter((t) => !["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"].includes(String(t.status || ""))).length}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-white/35">Сроки</div>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div className="rounded-2xl bg-black/20 p-3">
+                          <div className="text-[11px] text-white/35">В срок</div>
+                          <div className="mt-1 text-base font-semibold text-white">
+                            {managerTasks.filter((t) => ["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"].includes(String(t.status || "")) && !t.deadlineMissedMarked && !Number(t.deadlineChangeCount || 0)).length}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-black/20 p-3">
+                          <div className="text-[11px] text-white/35">Перенос</div>
+                          <div className="mt-1 text-base font-semibold text-white">
+                            {managerTasks.filter((t) => ["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"].includes(String(t.status || "")) && Number(t.deadlineChangeCount || 0) > 0 && !Number(t.deadlineClientChangeCount || 0)).length}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-black/20 p-3">
+                          <div className="text-[11px] text-white/35">Клиент</div>
+                          <div className="mt-1 text-base font-semibold text-white">
+                            {managerTasks.filter((t) => ["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"].includes(String(t.status || "")) && Number(t.deadlineClientChangeCount || 0) > 0).length}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -4051,6 +4082,18 @@ export default function App() {
                 <FormInput value={editTaskRefs} onChange={(e) => setEditTaskRefs(e.target.value)} placeholder="Референсы" />
                 <FormInput value={editTaskDeliveryTarget} onChange={(e) => setEditTaskDeliveryTarget(e.target.value)} placeholder="Куда отгружать" />
                 <FormInput value={editTaskComment} onChange={(e) => setEditTaskComment(e.target.value)} placeholder="Комментарий" />
+
+                {editTaskDeadlineReworkMode ? (
+                  <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/80">
+                    <input
+                      type="checkbox"
+                      checked={editTaskDeadlineClientFault}
+                      onChange={(e) => setEditTaskDeadlineClientFault(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-white/20 bg-transparent"
+                    />
+                    <span>Перенос дедлайна по вине клиента</span>
+                  </label>
+                ) : null}
 
                 {editTaskError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{editTaskError}</div> : null}
 
