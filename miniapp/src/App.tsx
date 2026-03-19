@@ -54,6 +54,9 @@ type Task = {
   paymentMethod?: string | null;
   paymentRequired?: boolean;
   revisionCount?: number;
+  deadlineExpired?: boolean;
+  deadlineMissedMarked?: boolean;
+  deadlinePenaltyPercent?: number | null;
 };
 
 type TasksResponse = {
@@ -584,6 +587,7 @@ function TaskDetailModal({
   onManagerOpenFixes,
   onManagerMarkPaid,
   onManagerEdit,
+  onManagerDeadlineMissed,
   onOpenAllFixes,
   onOpenExecutorProfile
 }: {
@@ -593,6 +597,7 @@ function TaskDetailModal({
   onManagerOpenFixes?: (taskId: number) => void;
   onManagerMarkPaid?: (taskId: number) => void;
   onManagerEdit?: (task: Task) => void;
+  onManagerDeadlineMissed?: (taskId: number) => void;
   onOpenAllFixes?: (task: Task) => void;
   onOpenExecutorProfile?: (executorId: number) => void;
 }) {
@@ -613,6 +618,14 @@ function TaskDetailModal({
         <div className="mb-4 inline-flex rounded-full border border-[#56FFEF]/20 bg-[#56FFEF]/10 px-3 py-2 text-sm text-[#56FFEF]">
           Текущий этап: {getCurrentStageLabel(task.status)}
         </div>
+
+        {task.deadlineExpired ? (
+          <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
+            {task.deadlineMissedMarked
+              ? `Дедлайн отмечен как пропущенный${task.deadlinePenaltyPercent ? `. Рейтинг исполнителя снижен на ${task.deadlinePenaltyPercent}%` : ""}.`
+              : "Дедлайн по задаче истёк. Менеджер должен решить: продлить срок или отметить просрочку."}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Дедлайн</div><div>{task.deadline || "—"}</div></div>
@@ -653,6 +666,26 @@ function TaskDetailModal({
               className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
             >
               Редактировать задачу
+            </button>
+          </div>
+        ) : null}
+
+        {task.deadlineExpired && !task.deadlineMissedMarked && (onManagerEdit || onManagerDeadlineMissed) ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onManagerEdit?.(task)}
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
+            >
+              Продлить дедлайн
+            </button>
+            <button
+              onClick={() => {
+                onManagerDeadlineMissed?.(task.id);
+                onClose();
+              }}
+              className="rounded-2xl bg-rose-300 px-4 py-3 text-sm font-medium text-black"
+            >
+              Дедлайн пропущен
             </button>
           </div>
         ) : null}
@@ -1500,7 +1533,7 @@ export default function App() {
   };
 
 
-  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid") => {
+  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid" | "deadlineMissed") => {
     try {
       const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
         method: "POST",
@@ -2884,6 +2917,11 @@ export default function App() {
                 {activeBottomTab === "tasks" ? (
                   <>
                     <div className="mb-4 flex items-center justify-between"><div className="text-sm text-white/45">{activeTopTab === "waiting" && "Задачи, которые ждут назначения исполнителя"}{activeTopTab === "active" && "Задачи, которые сейчас в работе"}{activeTopTab === "archived" && "Завершённые и архивные задачи"}</div></div>
+                    {activeTopTab === "active" && visibleTasks.some((task) => task.deadlineExpired && !task.deadlineMissedMarked) ? (
+                      <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-3 text-sm text-rose-200">
+                        Есть задачи с истёкшим дедлайном. Открой карточку задачи и отметь: продлить дедлайн или дедлайн пропущен.
+                      </div>
+                    ) : null}
                     {managerTasksError ? <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-3 text-sm text-rose-200">{managerTasksError}</div> : null}
                     {isLoadingTasks ? (
                       <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 text-sm text-white/55">Загружаю задачи...</div>
@@ -3863,6 +3901,7 @@ export default function App() {
           }) : undefined}
           onManagerMarkPaid={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "paid")) : undefined}
           onManagerEdit={screen === "managerApp" && activeBottomTab === "tasks" ? ((task) => openTaskEditor(task)) : undefined}
+          onManagerDeadlineMissed={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "deadlineMissed")) : undefined}
           onOpenAllFixes={(task) => setAllFixesTask(task)}
           onOpenExecutorProfile={screen === "managerApp" && activeBottomTab === "tasks" ? ((executorId) => void openExecutorProfileById(executorId)) : undefined}
         />
