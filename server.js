@@ -1449,19 +1449,6 @@ function enrichExecutor(executor) {
 }
 
 function mapTaskForMiniapp(task) {
-  const timeline = task.timeline || {};
-  const deadlineTimestamp = task.deadlineDate && task.deadlineTime
-    ? new Date(`${task.deadlineDate}T${task.deadlineTime}:00`).getTime()
-    : 0;
-  const archivedStatuses = ["Оплачена", "Завершена", "Закрыта"];
-  const deadlineExpired = Boolean(
-    deadlineTimestamp &&
-    !Number.isNaN(deadlineTimestamp) &&
-    Date.now() > deadlineTimestamp &&
-    !archivedStatuses.includes(String(task.status || "")) &&
-    !timeline.deadlineMissedMarkedAt
-  );
-
   return {
     id: task.id,
     title: task.title || "",
@@ -1485,10 +1472,7 @@ function mapTaskForMiniapp(task) {
     stageMaterials: task.stageMaterials || {},
     paymentMethod: task.stageMaterials?.paymentMeta?.method || null,
     paymentRequired: Boolean(task.stageMaterials?.paymentMeta?.required),
-    revisionCount: Number(task.timeline?.revisionCount || 0),
-    deadlineExpired,
-    deadlineMissedMarked: Boolean(timeline.deadlineMissedMarkedAt),
-    deadlinePenaltyPercent: timeline.deadlinePenaltyPercent ? Number(timeline.deadlinePenaltyPercent) : null
+    revisionCount: Number(task.timeline?.revisionCount || 0)
   };
 }
 
@@ -4240,66 +4224,31 @@ ${task.title}`,
         try {
           const payload = JSON.parse(body || "{}");
           const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-          if (!task) return 
-    if (req.method === "POST" && req.url === "/api/tasks/update") {
-      let body = "";
-      req.on("data", (chunk) => {
-        body += chunk.toString();
-      });
+          if (!task) return sendJson(res, 404, { error: "Task not found" });
 
-      req.on("end", async () => {
-        try {
-          const payload = JSON.parse(body || "{}");
-          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
-
-          if (!task) {
-            return sendJson(res, 404, { error: "Task not found" });
-          }
-
-          task.title = String(payload.title || task.title || "").trim();
-          task.categories = Array.isArray(payload.categories) ? payload.categories : (task.categories || []);
-          task.deadlineDate = String(payload.deadlineDate || task.deadlineDate || "").trim();
-          task.deadlineTime = String(payload.deadlineTime || task.deadlineTime || "").trim();
-          task.deadline = [task.deadlineDate, task.deadlineTime].filter(Boolean).join(" ");
-          task.price = String(payload.price || task.price || "").trim();
-          task.sources = payload.sources ? { type: "text", value: String(payload.sources).trim() } : null;
-          task.refs_data = payload.refs_data ? { type: "text", value: String(payload.refs_data).trim() } : null;
-          task.deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget).trim() : "";
-          task.comment = payload.comment ? String(payload.comment).trim() : "";
-
-          await saveTaskToDb(task);
-          return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-        } catch (error) {
-          console.error("POST /api/tasks/update error:", error);
-          return sendJson(res, 500, { error: "Failed to update task" });
-        }
-      });
-
-      return;
-    }
-
-sendJson(res, 404, { error: "Task not found" });
           task.timeline = task.timeline || {};
-          if (payload.action === "deadlineMissed") {
-            if (!task.timeline.deadlineMissedMarkedAt) {
-              const executor = executors.get(task.assignedExecutorId);
-              const numericPrice = Number(String(task.price || "").replace(/[^\d,.-]/g, "").replace(",", "."));
-              const penaltyPercent = Number.isFinite(numericPrice) && numericPrice > 10000 ? 10 : 5;
 
-              task.timeline.deadlineMissedMarkedAt = new Date().toISOString();
-              task.timeline.deadlinePenaltyPercent = penaltyPercent;
-
-              if (executor && typeof executor.rating === "number") {
-                executor.rating = Number(Math.max(1, (executor.rating * (1 - penaltyPercent / 100))).toFixed(2));
-                executor.updatedAt = new Date().toISOString();
-                await saveExecutorToDb(executor);
-                executors.set(executor.telegramId, executor);
-              }
+          const applyDeadlinePenalty = async () => {
+            if (task.timeline.deadlineMissedMarkedAt) {
+              return Number(task.timeline.deadlinePenaltyPercent || 0);
             }
 
-            await saveTaskToDb(task);
-            return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
-          }
+            const executor = executors.get(task.assignedExecutorId);
+            const numericPrice = Number(String(task.price || "").replace(/[^\d,.-]/g, "").replace(",", "."));
+            const penaltyPercent = Number.isFinite(numericPrice) && numericPrice > 10000 ? 10 : 5;
+
+            task.timeline.deadlineMissedMarkedAt = new Date().toISOString();
+            task.timeline.deadlinePenaltyPercent = penaltyPercent;
+
+            if (executor && typeof executor.rating === "number") {
+              executor.rating = Number(Math.max(1, (executor.rating * (1 - penaltyPercent / 100))).toFixed(2));
+              executor.updatedAt = new Date().toISOString();
+              await saveExecutorToDb(executor);
+              executors.set(executor.telegramId, executor);
+            }
+
+            return penaltyPercent;
+          };
 
           if (payload.action === "approve") {
             const executor = executors.get(task.assignedExecutorId);
@@ -4361,9 +4310,20 @@ sendJson(res, 404, { error: "Task not found" });
           } else if (payload.action === "paid") {
             task.status = "Ожидает подтверждения оплаты";
             task.timeline.paidAt = new Date().toISOString();
+          } else if (payload.action === "deadlineClose") {
+            const penaltyPercent = await applyDeadlinePenalty();
+            task.status = "Просрочен дедлайн, клиент отказался";
+            task.timeline.closedAfterDeadlineAt = new Date().toISOString();
+            task.timeline.deadlinePenaltyPercent = penaltyPercent;
+          } else if (payload.action === "deadlineRework") {
+            const penaltyPercent = await applyDeadlinePenalty();
+            task.status = "Правки";
+            task.timeline.reworkAfterDeadlineAt = new Date().toISOString();
+            task.timeline.deadlinePenaltyPercent = penaltyPercent;
           } else {
             return sendJson(res, 400, { error: "Unknown action" });
           }
+
           await saveTaskToDb(task);
 
           const executorChatId = task.assignedExecutorId || null;
@@ -4413,30 +4373,92 @@ ${String(payload.note || "").trim() || "Открой задачу, чтобы п
                   "active",
                   getMainKeyboard(false, true)
                 );
-              } else {
-                sendTaskNotification(
-                  executorChatId,
-                  `По задаче #${task.id} счёт оплачен.`,
-                  task,
-                  "executor",
-                  "tasks",
-                  "archived",
-                  getMainKeyboard(false, true)
-                );
               }
+            } else if (payload.action === "deadlineClose") {
+              sendTaskNotification(
+                executorChatId,
+                `По задаче #${task.id} дедлайн отмечен как пропущенный. Задача закрыта.`,
+                task,
+                "executor",
+                "tasks",
+                "archived",
+                getMainKeyboard(false, true)
+              );
+            } else if (payload.action === "deadlineRework") {
+              sendTaskNotification(
+                executorChatId,
+                `По задаче #${task.id} дедлайн был пропущен. Менеджер выставит новый дедлайн на доделывание.`,
+                task,
+                "executor",
+                "tasks",
+                "active",
+                getMainKeyboard(false, true)
+              );
             }
           }
 
-          sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+          return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
-          console.error(error);
-          sendJson(res, 500, { error: "Failed to update manager stage action" });
+          console.error("POST /api/tasks/manager-stage-action error:", error);
+          return sendJson(res, 500, { error: "Failed manager stage action" });
         }
       });
       return;
     }
 
-      if (req.method === "GET" && req.url === "/") {
+    if (req.method === "POST" && req.url === "/api/tasks/update") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on("end", async () => {
+        try {
+          const payload = JSON.parse(body || "{}");
+          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
+
+          if (!task) {
+            return sendJson(res, 404, { error: "Task not found" });
+          }
+
+          const previousDeadline = task.deadline;
+
+          task.title = String(payload.title || task.title || "").trim();
+          task.categories = Array.isArray(payload.categories) ? payload.categories : (task.categories || []);
+          task.deadlineDate = String(payload.deadlineDate || task.deadlineDate || "").trim();
+          task.deadlineTime = String(payload.deadlineTime || task.deadlineTime || "").trim();
+          task.deadline = [task.deadlineDate, task.deadlineTime].filter(Boolean).join(" ");
+          task.price = String(payload.price || task.price || "").trim();
+          task.sources = payload.sources ? { type: "text", value: String(payload.sources).trim() } : null;
+          task.refs_data = payload.refs_data ? { type: "text", value: String(payload.refs_data).trim() } : null;
+          task.deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget).trim() : "";
+          task.comment = payload.comment ? String(payload.comment).trim() : "";
+
+          await saveTaskToDb(task);
+
+          if (task.assignedExecutorId && previousDeadline !== task.deadline) {
+            sendTaskNotification(
+              task.assignedExecutorId,
+              `По задаче #${task.id} менеджер изменил дедлайн. Новый срок: ${task.deadline || "без даты"}.`,
+              task,
+              "executor",
+              "tasks",
+              "active",
+              getMainKeyboard(false, true)
+            );
+          }
+
+          return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+        } catch (error) {
+          console.error("POST /api/tasks/update error:", error);
+          return sendJson(res, 500, { error: "Failed to update task" });
+        }
+      });
+
+      return;
+    }
+
+if (req.method === "GET" && req.url === "/") {
         res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Creative Conveyor is running");
         return;
