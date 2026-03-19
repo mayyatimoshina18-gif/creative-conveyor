@@ -1449,6 +1449,19 @@ function enrichExecutor(executor) {
 }
 
 function mapTaskForMiniapp(task) {
+  const timeline = task.timeline || {};
+  const deadlineTimestamp = task.deadlineDate && task.deadlineTime
+    ? new Date(`${task.deadlineDate}T${task.deadlineTime}:00`).getTime()
+    : 0;
+  const archivedStatuses = ["Оплачена", "Завершена", "Закрыта"];
+  const deadlineExpired = Boolean(
+    deadlineTimestamp &&
+    !Number.isNaN(deadlineTimestamp) &&
+    Date.now() > deadlineTimestamp &&
+    !archivedStatuses.includes(String(task.status || "")) &&
+    !timeline.deadlineMissedMarkedAt
+  );
+
   return {
     id: task.id,
     title: task.title || "",
@@ -1472,7 +1485,10 @@ function mapTaskForMiniapp(task) {
     stageMaterials: task.stageMaterials || {},
     paymentMethod: task.stageMaterials?.paymentMeta?.method || null,
     paymentRequired: Boolean(task.stageMaterials?.paymentMeta?.required),
-    revisionCount: Number(task.timeline?.revisionCount || 0)
+    revisionCount: Number(task.timeline?.revisionCount || 0),
+    deadlineExpired,
+    deadlineMissedMarked: Boolean(timeline.deadlineMissedMarkedAt),
+    deadlinePenaltyPercent: timeline.deadlinePenaltyPercent ? Number(timeline.deadlinePenaltyPercent) : null
   };
 }
 
@@ -4263,6 +4279,28 @@ ${task.title}`,
     }
 
 sendJson(res, 404, { error: "Task not found" });
+          task.timeline = task.timeline || {};
+          if (payload.action === "deadlineMissed") {
+            if (!task.timeline.deadlineMissedMarkedAt) {
+              const executor = executors.get(task.assignedExecutorId);
+              const numericPrice = Number(String(task.price || "").replace(/[^\d,.-]/g, "").replace(",", "."));
+              const penaltyPercent = Number.isFinite(numericPrice) && numericPrice > 10000 ? 10 : 5;
+
+              task.timeline.deadlineMissedMarkedAt = new Date().toISOString();
+              task.timeline.deadlinePenaltyPercent = penaltyPercent;
+
+              if (executor && typeof executor.rating === "number") {
+                executor.rating = Number(Math.max(1, (executor.rating * (1 - penaltyPercent / 100))).toFixed(2));
+                executor.updatedAt = new Date().toISOString();
+                await saveExecutorToDb(executor);
+                executors.set(executor.telegramId, executor);
+              }
+            }
+
+            await saveTaskToDb(task);
+            return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
+          }
+
           if (payload.action === "approve") {
             const executor = executors.get(task.assignedExecutorId);
             task.timeline.approvedAt = new Date().toISOString();
