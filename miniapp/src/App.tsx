@@ -180,34 +180,6 @@ const CALCULATOR_STORAGE_KEY = "creative-conveyor-manager-calculators-v1";
 function formatRubles(value: number) {
   return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
 }
-function formatDeadlineTimer(deadlineDate?: string | null, deadlineTime?: string | null) {
-  if (!deadlineDate || !deadlineTime) return null;
-
-  const deadline = new Date(`${deadlineDate}T${deadlineTime}:00`);
-  const timestamp = deadline.getTime();
-  if (Number.isNaN(timestamp)) return null;
-
-  const diffMs = timestamp - Date.now();
-  const isExpired = diffMs <= 0;
-  const absMs = Math.abs(diffMs);
-
-  const totalMinutes = Math.floor(absMs / (1000 * 60));
-  const days = Math.floor(totalMinutes / (60 * 24));
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-  const minutes = totalMinutes % 60;
-
-  const parts = [];
-  if (days > 0) parts.push(`${days}д`);
-  if (hours > 0 || days > 0) parts.push(`${hours}ч`);
-  parts.push(`${minutes}м`);
-
-  return {
-    label: isExpired ? `Просрочено на ${parts.join(" ")}` : `${parts.join(" ")} до дедлайна`,
-    isExpired,
-    isDanger: !isExpired && diffMs <= 5 * 60 * 60 * 1000
-  };
-}
-
 
 function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
   return {
@@ -346,8 +318,6 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
 }
 
 function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; footer?: React.ReactNode }) {
-  const deadlineTimer = formatDeadlineTimer((task as any).deadlineDate, (task as any).deadlineTime);
-
   return (
     <motion.button
       type="button"
@@ -376,17 +346,6 @@ function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; fo
           </span>
         ))}
       </div>
-
-      {deadlineTimer ? (
-        <div className={cn(
-          "mb-3 rounded-2xl border px-3 py-2 text-sm font-medium",
-          deadlineTimer.isExpired || deadlineTimer.isDanger
-            ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-            : "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]"
-        )}>
-          {deadlineTimer.label}
-        </div>
-      ) : null}
 
       <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
         <div className="rounded-2xl bg-black/20 p-3">
@@ -628,7 +587,8 @@ function TaskDetailModal({
   onManagerOpenFixes,
   onManagerMarkPaid,
   onManagerEdit,
-  onManagerDeadlineMissed,
+  onManagerDeadlineClose,
+  onManagerDeadlineRework,
   onOpenAllFixes,
   onOpenExecutorProfile
 }: {
@@ -638,7 +598,8 @@ function TaskDetailModal({
   onManagerOpenFixes?: (taskId: number) => void;
   onManagerMarkPaid?: (taskId: number) => void;
   onManagerEdit?: (task: Task) => void;
-  onManagerDeadlineMissed?: (taskId: number) => void;
+  onManagerDeadlineClose?: (taskId: number) => void;
+  onManagerDeadlineRework?: (task: Task) => void;
   onOpenAllFixes?: (task: Task) => void;
   onOpenExecutorProfile?: (executorId: number) => void;
 }) {
@@ -664,7 +625,7 @@ function TaskDetailModal({
           <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
             {task.deadlineMissedMarked
               ? `Дедлайн отмечен как пропущенный${task.deadlinePenaltyPercent ? `. Рейтинг исполнителя снижен на ${task.deadlinePenaltyPercent}%` : ""}.`
-              : "Дедлайн по задаче истёк. Менеджер должен решить: продлить срок или отметить просрочку."}
+              : "Дедлайн по задаче истёк. Выбери: закрыть задачу или дать исполнителю дополнительное время на доделывание."}
           </div>
         ) : null}
 
@@ -711,22 +672,25 @@ function TaskDetailModal({
           </div>
         ) : null}
 
-        {task.deadlineExpired && !task.deadlineMissedMarked && (onManagerEdit || onManagerDeadlineMissed) ? (
+        {task.deadlineExpired && !task.deadlineMissedMarked && (onManagerDeadlineClose || onManagerDeadlineRework) ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button
-              onClick={() => onManagerEdit?.(task)}
+              onClick={() => {
+                onManagerDeadlineClose?.(task.id);
+                onClose();
+              }}
               className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
             >
-              Продлить дедлайн
+              Закрыть задачу
             </button>
             <button
               onClick={() => {
-                onManagerDeadlineMissed?.(task.id);
+                onManagerDeadlineRework?.(task);
                 onClose();
               }}
               className="rounded-2xl bg-rose-300 px-4 py-3 text-sm font-medium text-black"
             >
-              Дедлайн пропущен
+              Доделать задачу
             </button>
           </div>
         ) : null}
@@ -1574,7 +1538,7 @@ export default function App() {
   };
 
 
-  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid" | "deadlineMissed") => {
+  const handleManagerStageAction = async (taskId: number, action: "approve" | "unpaid" | "paid" | "deadlineClose" | "deadlineRework") => {
     try {
       const response = await fetch(`${API_BASE}/api/tasks/manager-stage-action`, {
         method: "POST",
@@ -1586,10 +1550,19 @@ export default function App() {
       await loadTasks();
       await loadManagerTasks();
       if (executor?.telegramId) await loadExecutorTasks(executor.telegramId);
+      return (data as any)?.task || null;
     } catch (error) {
       console.error("Failed manager stage action:", error);
       setManagerTasksError("Не удалось обновить статус задачи");
     }
+  };
+
+  const handleDeadlineRework = async (task: Task) => {
+    const updatedTask = await handleManagerStageAction(task.id, "deadlineRework");
+    openTaskEditor({
+      ...task,
+      ...(updatedTask || {})
+    });
   };
 
   const submitFixes = async () => {
@@ -3942,7 +3915,8 @@ export default function App() {
           }) : undefined}
           onManagerMarkPaid={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "paid")) : undefined}
           onManagerEdit={screen === "managerApp" && activeBottomTab === "tasks" ? ((task) => openTaskEditor(task)) : undefined}
-          onManagerDeadlineMissed={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "deadlineMissed")) : undefined}
+          onManagerDeadlineClose={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "deadlineClose")) : undefined}
+          onManagerDeadlineRework={screen === "managerApp" && activeBottomTab === "tasks" ? ((task) => void handleDeadlineRework(task)) : undefined}
           onOpenAllFixes={(task) => setAllFixesTask(task)}
           onOpenExecutorProfile={screen === "managerApp" && activeBottomTab === "tasks" ? ((executorId) => void openExecutorProfileById(executorId)) : undefined}
         />
