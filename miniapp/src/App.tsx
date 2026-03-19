@@ -25,6 +25,8 @@ type Task = {
   title: string;
   type: string[];
   deadline: string;
+  deadlineDate?: string;
+  deadlineTime?: string;
   price: string;
   manager: string;
   status?: string;
@@ -181,6 +183,34 @@ function formatRubles(value: number) {
   return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
 }
 
+function formatDeadlineTimer(deadlineDate?: string | null, deadlineTime?: string | null) {
+  if (!deadlineDate || !deadlineTime) return null;
+
+  const deadline = new Date(`${deadlineDate}T${deadlineTime}:00`);
+  const deadlineTs = deadline.getTime();
+  if (Number.isNaN(deadlineTs)) return null;
+
+  const diff = deadlineTs - Date.now();
+  const isExpired = diff <= 0;
+  const abs = Math.abs(diff);
+
+  const totalMinutes = Math.floor(abs / (1000 * 60));
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}д`);
+  if (hours > 0 || days > 0) parts.push(`${hours}ч`);
+  parts.push(`${minutes}м`);
+
+  return {
+    label: isExpired ? `Просрочено на ${parts.join(" ")}` : `${parts.join(" ")} до дедлайна`,
+    isExpired,
+    isDanger: !isExpired && diff <= 5 * 60 * 60 * 1000
+  };
+}
+
 function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
   return {
     resize_static: 0,
@@ -318,6 +348,8 @@ function RoleButton({ label, onClick }: { label: string; onClick: () => void }) 
 }
 
 function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; footer?: React.ReactNode }) {
+  const deadlineTimer = formatDeadlineTimer(task.deadlineDate, task.deadlineTime);
+
   return (
     <motion.button
       type="button"
@@ -346,6 +378,17 @@ function TaskCard({ task, onOpen, footer }: { task: Task; onOpen: () => void; fo
           </span>
         ))}
       </div>
+
+      {deadlineTimer ? (
+        <div className={cn(
+          "mb-3 rounded-2xl border px-3 py-2 text-sm font-medium",
+          deadlineTimer.isExpired || deadlineTimer.isDanger
+            ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
+            : "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]"
+        )}>
+          {deadlineTimer.label}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 text-sm text-white/75">
         <div className="rounded-2xl bg-black/20 p-3">
