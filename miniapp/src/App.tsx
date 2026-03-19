@@ -194,6 +194,25 @@ function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
 function getCalculatorTitle(entry: ManagerCalculatorEntry) {
   return entry.title?.trim() || "Калькулятор без названия";
 }
+function getCalculatorSpecializations(inputs: Record<CalculatorServiceKey, number>) {
+  const hasStaticLike =
+    Number(inputs.resize_static || 0) > 0 ||
+    Number(inputs.resize_gif || 0) > 0 ||
+    Number(inputs.resize_html || 0) > 0 ||
+    Number(inputs.create_static || 0) > 0 ||
+    Number(inputs.create_gif || 0) > 0 ||
+    Number(inputs.create_html || 0) > 0;
+
+  const hasMotionLike =
+    Number(inputs.resize_animation || 0) > 0 ||
+    Number(inputs.create_animation || 0) > 0;
+
+  const result: string[] = [];
+  if (hasStaticLike) result.push("Статика");
+  if (hasMotionLike) result.push("Моушен");
+  return result;
+}
+
 
 function calculateManagerCalculator(inputs: Record<CalculatorServiceKey, number>) {
   const marginalLayer =
@@ -1433,6 +1452,7 @@ export default function App() {
     }
     try {
       setStageLoading(true);
+      setStageError("");
       const endpoint = stageKey === "invoice" ? "/api/tasks/invoice-submit" : "/api/tasks/stage-submit";
       const response = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
@@ -1441,12 +1461,21 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "Failed stage submit");
+
       setStageTaskId(null);
       setStageKey(null);
       setStageValue("");
       setStageError("");
-      await loadExecutorTasks(executor.telegramId, { silent: true });
-      await loadTasks({ silent: true });
+
+      const refreshResults = await Promise.allSettled([
+        loadExecutorTasks(executor.telegramId, { silent: true }),
+        loadTasks(true)
+      ]);
+
+      const failedRefresh = refreshResults.some((item) => item.status === "rejected");
+      if (failedRefresh) {
+        console.error("Stage submit refresh warning:", refreshResults);
+      }
     } catch (error) {
       console.error("Failed to submit stage:", error);
       setStageError(error instanceof Error ? error.message : "Не удалось отправить материал");
@@ -1767,7 +1796,10 @@ export default function App() {
           : "Исполнитель отклонён"
       );
 
-      await loadPendingExecutors();
+      await Promise.allSettled([
+        loadPendingExecutors(),
+        loadApprovedExecutors()
+      ]);
     } catch (error) {
       console.error("Failed to moderate executor:", error);
       setModerationMessage("Не удалось сохранить решение");
@@ -2005,9 +2037,7 @@ export default function App() {
       setCreateTitle((calculatorTitle || "Задача из калькулятора").trim());
     }
     if (!createCategories.length) {
-      const inferred = CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0)
-        .map((line) => line.label)
-        .filter((item) => SPECIALIZATION_OPTIONS.includes(item));
+      const inferred = getCalculatorSpecializations(calculatorInputs);
       if (inferred.length) {
         setCreateCategories(Array.from(new Set(inferred)));
       }
@@ -2813,7 +2843,7 @@ export default function App() {
                                         <div className="space-y-2 rounded-[24px] border border-white/8 bg-black/20 p-4">
                                           <div className="text-sm text-white/55">Отклики исполнителей</div>
                                           {taskResponses.map((response: any) => {
-                                            const rank = response?.rank || getApprovedExecutorRank(response.executorId);
+                                            const rank = getApprovedExecutorRank(response.executorId);
                                             const accepted = response?.decision === "Принял";
                                             const telegramLink = response.executorContact
                                               ? `https://t.me/${String(response.executorContact).trim().replace(/^@+/, "")}`
@@ -2821,8 +2851,16 @@ export default function App() {
                                             return (
                                               <div
                                                 key={`${task.id}-${response.executorId}`}
+                                                role="button"
+                                                tabIndex={0}
                                                 onClick={() => void openExecutorProfileById(response.executorId)}
-                                                className="w-full cursor-pointer rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20 active:scale-[0.995]"
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault();
+                                                    void openExecutorProfileById(response.executorId);
+                                                  }
+                                                }}
+                                                className="w-full rounded-2xl border border-white/10 bg-[#0b0b10] p-4 text-left transition hover:border-[#56FFEF]/20"
                                               >
                                                 <div className="mb-2 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/60">
                                                   #{rank && rank > 0 ? rank : "—"}
@@ -2862,7 +2900,7 @@ export default function App() {
                                                 ) : null}
                                               </div>
                                             );
-                                          })}
+                                          })}})}
                                         </div>
                                       ) : null;
                                     })()
@@ -3329,36 +3367,27 @@ export default function App() {
                   </div>
                 ) : activeBottomTab === "calculator" ? (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-3 gap-2 rounded-[24px] border border-white/8 bg-white/[0.03] p-1.5">
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("new")}
-                        className={cn(
-                          "rounded-[18px] px-3 py-3 text-left transition",
-                          calculatorTopTab === "new" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                        )}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "new" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
                       >
-                        <div className="text-[12px] font-medium leading-4">Новый</div>
+                        Новый калькулятор
                       </button>
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("all")}
-                        className={cn(
-                          "rounded-[18px] px-3 py-3 text-left transition",
-                          calculatorTopTab === "all" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                        )}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "all" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
                       >
-                        <div className="text-[12px] font-medium leading-4">Все</div>
+                        Все калькуляторы
                       </button>
                       <button
                         type="button"
                         onClick={() => setCalculatorTopTab("dashboard")}
-                        className={cn(
-                          "rounded-[18px] px-3 py-3 text-left transition",
-                          calculatorTopTab === "dashboard" ? "bg-[#56FFEF] text-black" : "text-white/50 hover:bg-white/5"
-                        )}
+                        className={cn("rounded-full border px-4 py-3 text-sm transition", calculatorTopTab === "dashboard" ? "border-[#56FFEF]/20 bg-[#56FFEF]/10 text-[#56FFEF]" : "border-white/10 bg-white/[0.04] text-white/55")}
                       >
-                        <div className="text-[12px] font-medium leading-4">Дашборд</div>
+                        Дашборд
                       </button>
                     </div>
 
@@ -3691,36 +3720,6 @@ export default function App() {
                       type="button"
                       className="w-full rounded-[24px] border border-rose-300/20 bg-rose-300/10 px-5 py-4 text-base font-medium text-rose-200 transition hover:bg-rose-300/15"
                     >
-                      Покинуть креативный конвейер
-                    </button>
-                  </div>
-                ) : activeBottomTab === "profile" ? (
-                  <div className="space-y-4">
-                    <div className="rounded-[24px] border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-[#56FFEF]">manager profile</div>
-                      <div className="mt-1 text-sm text-white/80">это фронтовый профиль менеджера</div>
-                    </div>
-
-                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
-                      <div className="text-sm text-white/40">Контакт</div>
-                      <div className="mt-2 text-xl text-white">{createManagerContact || "@manager"}</div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl bg-black/20 p-3">
-                        <div className="text-xs text-white/40">Задач создано</div>
-                        <div className="mt-2 text-lg font-semibold text-white">{managerTasks.length}</div>
-                      </div>
-
-                      <div className="rounded-2xl bg-black/20 p-3">
-                        <div className="text-xs text-white/40">Активных</div>
-                        <div className="mt-2 text-lg font-semibold text-white">
-                          {managerTasks.filter((t) => !["Оплачена", "Завершена", "Закрыта"].includes(String(t.status || ""))).length}
-                        </div>
-                      </div>
-                    </div>
-
-                    <button className="w-full rounded-[20px] bg-[#56FFEF] py-3 text-black">
                       Покинуть креативный конвейер
                     </button>
                   </div>
