@@ -1488,7 +1488,17 @@ function mapTaskForMiniapp(task) {
     revisionCount: Number(task.timeline?.revisionCount || 0),
     deadlineExpired,
     deadlineMissedMarked: Boolean(timeline.deadlineMissedMarkedAt),
-    deadlinePenaltyPercent: timeline.deadlinePenaltyPercent ? Number(timeline.deadlinePenaltyPercent) : null
+    deadlinePenaltyPercent: timeline.deadlinePenaltyPercent ? Number(timeline.deadlinePenaltyPercent) : null,
+    deadlineHistory: Array.isArray(timeline.deadlineChanges)
+      ? timeline.deadlineChanges.map((item) => ({
+          value: item?.value || "",
+          createdAt: item?.createdAt || null
+        }))
+      : [],
+    deadlineChangeCount: Array.isArray(timeline.deadlineChanges) ? timeline.deadlineChanges.length : 0,
+    deadlineClientChangeCount: Array.isArray(timeline.deadlineChanges)
+      ? timeline.deadlineChanges.filter((item) => Boolean(item?.clientFault)).length
+      : 0
   };
 }
 
@@ -1531,7 +1541,8 @@ function getMiniappTasksGrouped() {
     }
 
     if (
-      status === "Оплачена"
+      status === "Оплачена" ||
+      status === "Просрочен дедлайн, клиент отказался"
     ) {
       grouped.archived.push(mappedTask);
       continue;
@@ -4438,6 +4449,7 @@ ${String(payload.note || "").trim() || "Открой задачу, чтобы п
           }
 
           const previousDeadline = task.deadline;
+          task.timeline = task.timeline || {};
 
           task.title = String(payload.title || task.title || "").trim();
           task.categories = Array.isArray(payload.categories) ? payload.categories : (task.categories || []);
@@ -4449,6 +4461,41 @@ ${String(payload.note || "").trim() || "Открой задачу, чтобы п
           task.refs_data = payload.refs_data ? { type: "text", value: String(payload.refs_data).trim() } : null;
           task.deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget).trim() : "";
           task.comment = payload.comment ? String(payload.comment).trim() : "";
+
+          if (previousDeadline !== task.deadline) {
+            if (!Array.isArray(task.timeline.deadlineChanges)) task.timeline.deadlineChanges = [];
+            task.timeline.deadlineChanges.push({
+              previousDeadline: previousDeadline || "—",
+              newDeadline: task.deadline || "—",
+              clientFault: Boolean(payload.deadlineClientFault),
+              createdAt: new Date().toISOString(),
+              value: `${previousDeadline || "—"} → ${task.deadline || "—"}${payload.deadlineClientFault ? " · клиент" : ""}`
+            });
+          }
+
+          if (payload.deadlineRework) {
+            task.status = "Правки";
+            task.timeline.reworkAfterDeadlineAt = new Date().toISOString();
+            if (!task.timeline.deadlineMissedMarkedAt) {
+              task.timeline.deadlineMissedMarkedAt = new Date().toISOString();
+            }
+
+            if (payload.deadlineClientFault) {
+              task.timeline.deadlinePenaltyPercent = 0;
+            } else {
+              const executor = executors.get(task.assignedExecutorId);
+              const numericPrice = Number(String(task.price || "").replace(/[^\d,.-]/g, "").replace(",", "."));
+              const penaltyPercent = Number.isFinite(numericPrice) && numericPrice > 10000 ? 10 : 5;
+              task.timeline.deadlinePenaltyPercent = penaltyPercent;
+
+              if (executor && typeof executor.rating === "number") {
+                executor.rating = Number(Math.max(1, (executor.rating * (1 - penaltyPercent / 100))).toFixed(2));
+                executor.updatedAt = new Date().toISOString();
+                await saveExecutorToDb(executor);
+                executors.set(executor.telegramId, executor);
+              }
+            }
+          }
 
           await saveTaskToDb(task);
 
