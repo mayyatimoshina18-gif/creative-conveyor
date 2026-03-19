@@ -583,6 +583,7 @@ function TaskDetailModal({
   onManagerApprove,
   onManagerOpenFixes,
   onManagerMarkPaid,
+  onManagerEdit,
   onOpenAllFixes,
   onOpenExecutorProfile
 }: {
@@ -591,6 +592,7 @@ function TaskDetailModal({
   onManagerApprove?: (taskId: number) => void;
   onManagerOpenFixes?: (taskId: number) => void;
   onManagerMarkPaid?: (taskId: number) => void;
+  onManagerEdit?: (task: Task) => void;
   onOpenAllFixes?: (task: Task) => void;
   onOpenExecutorProfile?: (executorId: number) => void;
 }) {
@@ -643,6 +645,17 @@ function TaskDetailModal({
         <div className="mt-4">
           <PipelineView task={task} />
         </div>
+
+        {onManagerEdit ? (
+          <div className="mt-4">
+            <button
+              onClick={() => onManagerEdit(task)}
+              className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white"
+            >
+              Редактировать задачу
+            </button>
+          </div>
+        ) : null}
 
         {task.status === "На проверке" && (onManagerApprove || onManagerOpenFixes) ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
@@ -833,6 +846,18 @@ export default function App() {
   const [fixesLoading, setFixesLoading] = useState(false);
   const [fixesClientFault, setFixesClientFault] = useState(false);
   const [allFixesTask, setAllFixesTask] = useState<Task | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [editTaskTitle, setEditTaskTitle] = useState("");
+  const [editTaskCategories, setEditTaskCategories] = useState<string[]>([]);
+  const [editTaskDeadlineDate, setEditTaskDeadlineDate] = useState("");
+  const [editTaskDeadlineTime, setEditTaskDeadlineTime] = useState("");
+  const [editTaskPrice, setEditTaskPrice] = useState("");
+  const [editTaskSources, setEditTaskSources] = useState("");
+  const [editTaskRefs, setEditTaskRefs] = useState("");
+  const [editTaskDeliveryTarget, setEditTaskDeliveryTarget] = useState("");
+  const [editTaskComment, setEditTaskComment] = useState("");
+  const [editTaskError, setEditTaskError] = useState("");
+  const [editTaskLoading, setEditTaskLoading] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -2031,6 +2056,82 @@ export default function App() {
     }
     setCalculatorMessage("Стоимость исполнителя перенесена в создание задачи");
     setActiveBottomTab("create");
+  };
+
+  const openTaskEditor = (task: Task) => {
+    setEditingTaskId(task.id);
+    setEditTaskTitle(task.title || "");
+    setEditTaskCategories(Array.isArray(task.type) ? task.type : []);
+    setEditTaskDeadlineDate(task.deadlineDate || "");
+    setEditTaskDeadlineTime(task.deadlineTime || "");
+    setEditTaskPrice(task.price || "");
+    setEditTaskSources(task.sourcesText || "");
+    setEditTaskRefs(task.refsText || "");
+    setEditTaskDeliveryTarget(task.deliveryTarget || "");
+    setEditTaskComment(task.comment || "");
+    setEditTaskError("");
+  };
+
+  const handleToggleEditCategory = (category: string) => {
+    setEditTaskCategories((prev) =>
+      prev.includes(category) ? prev.filter((item) => item !== category) : [...prev, category]
+    );
+  };
+
+  const handleUpdateTask = async () => {
+    if (!editingTaskId) return;
+    if (!editTaskTitle.trim()) {
+      setEditTaskError("Введите название задачи");
+      return;
+    }
+    if (!editTaskCategories.length) {
+      setEditTaskError("Выберите хотя бы одну категорию");
+      return;
+    }
+    if (!editTaskDeadlineDate.trim() || !editTaskDeadlineTime.trim()) {
+      setEditTaskError("Укажите дату и время дедлайна");
+      return;
+    }
+    if (!editTaskPrice.trim()) {
+      setEditTaskError("Введите стоимость");
+      return;
+    }
+
+    try {
+      setEditTaskLoading(true);
+      setEditTaskError("");
+
+      const response = await fetch(`${API_BASE}/api/tasks/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId: editingTaskId,
+          title: editTaskTitle.trim(),
+          categories: editTaskCategories,
+          deadlineDate: editTaskDeadlineDate.trim(),
+          deadlineTime: editTaskDeadlineTime.trim(),
+          price: editTaskPrice.trim(),
+          sources: editTaskSources.trim() || null,
+          refs_data: editTaskRefs.trim() || null,
+          deliveryTarget: editTaskDeliveryTarget.trim() || null,
+          comment: editTaskComment.trim() || null
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((data as any)?.error || "Failed to update task");
+
+      setEditingTaskId(null);
+      await Promise.allSettled([loadTasks(), loadManagerTasks()]);
+      if (selectedTask?.id === editingTaskId) {
+        setSelectedTask((data as any)?.task || null);
+      }
+    } catch (error) {
+      console.error("Failed to update task:", error);
+      setEditTaskError("Не удалось сохранить задачу");
+    } finally {
+      setEditTaskLoading(false);
+    }
   };
 
   const resetCreateForm = () => {
@@ -3761,6 +3862,7 @@ export default function App() {
             setSelectedTask(null);
           }) : undefined}
           onManagerMarkPaid={screen === "managerApp" && activeBottomTab === "tasks" ? ((taskId) => void handleManagerStageAction(taskId, "paid")) : undefined}
+          onManagerEdit={screen === "managerApp" && activeBottomTab === "tasks" ? ((task) => openTaskEditor(task)) : undefined}
           onOpenAllFixes={(task) => setAllFixesTask(task)}
           onOpenExecutorProfile={screen === "managerApp" && activeBottomTab === "tasks" ? ((executorId) => void openExecutorProfileById(executorId)) : undefined}
         />
@@ -3808,6 +3910,61 @@ export default function App() {
               <HistoryList title="История правок" items={mergeHistoryItems(allFixesTask.stageMaterials?.fixesHistory, allFixesTask.stageMaterials?.fixesNote)} />
               <div className="mt-4">
                 <button onClick={() => setAllFixesTask(null)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">Закрыть</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {editingTaskId ? (
+          <div className="fixed inset-0 z-[82] flex items-end justify-center bg-black/70 p-3">
+            <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div className="text-xl font-semibold text-white">Редактировать задачу</div>
+                <button onClick={() => { setEditingTaskId(null); setEditTaskError(""); }} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-white/70">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <FormInput value={editTaskTitle} onChange={(e) => setEditTaskTitle(e.target.value)} placeholder="Название задачи" />
+
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-3 text-sm text-white/55">Категории</div>
+                  <div className="flex flex-wrap gap-2">
+                    {SPECIALIZATION_OPTIONS.map((item) => {
+                      const active = editTaskCategories.includes(item);
+                      return (
+                        <button
+                          type="button"
+                          key={`edit-${item}`}
+                          onClick={() => handleToggleEditCategory(item)}
+                          className={cn("rounded-full border px-3 py-2 text-sm transition", active ? "border-[#56FFEF]/20 bg-[#56FFEF]/15 text-[#56FFEF]" : "border-white/10 bg-white/5 text-white/65")}
+                        >
+                          {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <FormInput type="date" value={editTaskDeadlineDate} onChange={(e) => setEditTaskDeadlineDate(e.target.value)} />
+                <FormInput type="time" value={editTaskDeadlineTime} onChange={(e) => setEditTaskDeadlineTime(e.target.value)} />
+                <FormInput value={editTaskPrice} onChange={(e) => setEditTaskPrice(e.target.value)} placeholder="Стоимость" />
+                <FormInput value={editTaskSources} onChange={(e) => setEditTaskSources(e.target.value)} placeholder="Источники" />
+                <FormInput value={editTaskRefs} onChange={(e) => setEditTaskRefs(e.target.value)} placeholder="Референсы" />
+                <FormInput value={editTaskDeliveryTarget} onChange={(e) => setEditTaskDeliveryTarget(e.target.value)} placeholder="Куда отгружать" />
+                <FormInput value={editTaskComment} onChange={(e) => setEditTaskComment(e.target.value)} placeholder="Комментарий" />
+
+                {editTaskError ? <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{editTaskError}</div> : null}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => { setEditingTaskId(null); setEditTaskError(""); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white">
+                    Отмена
+                  </button>
+                  <button onClick={() => void handleUpdateTask()} disabled={editTaskLoading} className="rounded-2xl bg-[#56FFEF] px-4 py-3 text-sm font-medium text-black disabled:opacity-60">
+                    {editTaskLoading ? "Сохраняю..." : "Сохранить"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
