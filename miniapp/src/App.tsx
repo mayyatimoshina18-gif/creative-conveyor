@@ -842,8 +842,8 @@ function ExecutorProfileViewModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div>{typeof profile.stats?.averageRevisions === "number" ? profile.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заработано</div><div>{typeof profile.stats?.earnedAmount === "number" ? `${profile.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Просрочено</div><div>{profile.stats?.deadlineMissedCount ?? 0}</div></div>
-          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Из них клиент</div><div>{profile.stats?.deadlineClientFaultCount ?? 0}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Просрочено производство</div><div>{Math.max(0, Number(profile.stats?.deadlineMissedCount || 0) - Number(profile.stats?.deadlineClientFaultCount || 0))}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Просрочено клиент</div><div>{profile.stats?.deadlineClientFaultCount ?? 0}</div></div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
@@ -3990,6 +3990,21 @@ export default function App() {
                           <div className="text-[11px] text-white/35">Клиент</div>
                           <div className="mt-1 text-base font-semibold text-white">
                             {managerTasks.filter((t) => ["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"].includes(String(t.status || "")) && Number(t.deadlineClientChangeCount || 0) > 0).length}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div className="rounded-2xl bg-black/20 p-3">
+                          <div className="text-[11px] text-white/35">Просрочено производство</div>
+                          <div className="mt-1 text-base font-semibold text-white">
+                            {managerTasks.filter((t) => Boolean(t.deadlineMissedMarked) && !Number(t.deadlineClientChangeCount || 0)).length}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-black/20 p-3">
+                          <div className="text-[11px] text-white/35">Просрочено клиент</div>
+                          <div className="mt-1 text-base font-semibold text-white">
+                            {managerTasks.filter((t) => Boolean(t.deadlineMissedMarked) && Number(t.deadlineClientChangeCount || 0) > 0).length}
                           </div>
                         </div>
                       </div>
