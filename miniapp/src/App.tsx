@@ -194,25 +194,6 @@ function emptyCalculatorInputs(): Record<CalculatorServiceKey, number> {
 function getCalculatorTitle(entry: ManagerCalculatorEntry) {
   return entry.title?.trim() || "Калькулятор без названия";
 }
-function getCalculatorSpecializations(inputs: Record<CalculatorServiceKey, number>) {
-  const hasStaticLike =
-    Number(inputs.resize_static || 0) > 0 ||
-    Number(inputs.resize_gif || 0) > 0 ||
-    Number(inputs.resize_html || 0) > 0 ||
-    Number(inputs.create_static || 0) > 0 ||
-    Number(inputs.create_gif || 0) > 0 ||
-    Number(inputs.create_html || 0) > 0;
-
-  const hasMotionLike =
-    Number(inputs.resize_animation || 0) > 0 ||
-    Number(inputs.create_animation || 0) > 0;
-
-  const result: string[] = [];
-  if (hasStaticLike) result.push("Статика");
-  if (hasMotionLike) result.push("Моушен");
-  return result;
-}
-
 
 function calculateManagerCalculator(inputs: Record<CalculatorServiceKey, number>) {
   const marginalLayer =
@@ -1452,7 +1433,6 @@ export default function App() {
     }
     try {
       setStageLoading(true);
-      setStageError("");
       const endpoint = stageKey === "invoice" ? "/api/tasks/invoice-submit" : "/api/tasks/stage-submit";
       const response = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
@@ -1461,21 +1441,12 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "Failed stage submit");
-
       setStageTaskId(null);
       setStageKey(null);
       setStageValue("");
       setStageError("");
-
-      const refreshResults = await Promise.allSettled([
-        loadExecutorTasks(executor.telegramId, { silent: true }),
-        loadTasks(true)
-      ]);
-
-      const failedRefresh = refreshResults.some((item) => item.status === "rejected");
-      if (failedRefresh) {
-        console.error("Stage submit refresh warning:", refreshResults);
-      }
+      await loadExecutorTasks(executor.telegramId, { silent: true });
+      await loadTasks({ silent: true });
     } catch (error) {
       console.error("Failed to submit stage:", error);
       setStageError(error instanceof Error ? error.message : "Не удалось отправить материал");
@@ -1796,10 +1767,7 @@ export default function App() {
           : "Исполнитель отклонён"
       );
 
-      await Promise.allSettled([
-        loadPendingExecutors(),
-        loadApprovedExecutors()
-      ]);
+      await loadPendingExecutors();
     } catch (error) {
       console.error("Failed to moderate executor:", error);
       setModerationMessage("Не удалось сохранить решение");
@@ -2037,7 +2005,9 @@ export default function App() {
       setCreateTitle((calculatorTitle || "Задача из калькулятора").trim());
     }
     if (!createCategories.length) {
-      const inferred = getCalculatorSpecializations(calculatorInputs);
+      const inferred = CALCULATOR_LINES.filter((line) => Number(calculatorInputs[line.key] || 0) > 0)
+        .map((line) => line.label)
+        .filter((item) => SPECIALIZATION_OPTIONS.includes(item));
       if (inferred.length) {
         setCreateCategories(Array.from(new Set(inferred)));
       }
@@ -2900,7 +2870,7 @@ export default function App() {
                                                 ) : null}
                                               </div>
                                             );
-                                          })}})}
+                                          })}
                                         </div>
                                       ) : null;
                                     })()
