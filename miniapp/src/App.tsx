@@ -677,9 +677,9 @@ function TaskDetailModal({
           </div>
         ) : null}
 
-        {task.deadlineHistory?.length ? (
+        {Array.isArray(task.deadlineHistory) && task.deadlineHistory.length ? (
           <div className="mb-4 rounded-2xl border border-[#56FFEF]/20 bg-[#56FFEF]/10 p-4 text-sm text-[#56FFEF]">
-            Новый дедлайн: {task.deadline || "—"}
+            Новый дедлайн: {String(task.deadlineHistory[task.deadlineHistory.length - 1]?.value || task.deadline || "—")}
           </div>
         ) : null}
 
@@ -1018,7 +1018,6 @@ export default function App() {
   const [createDeadlineTime, setCreateDeadlineTime] = useState("");
   const [createPrice, setCreatePrice] = useState("");
   const [createManagerContact, setCreateManagerContact] = useState("");
-  const [currentManagerTelegramId, setCurrentManagerTelegramId] = useState<number | null>(null);
   const [createSources, setCreateSources] = useState("");
   const [createRefs, setCreateRefs] = useState("");
   const [createDeliveryTarget, setCreateDeliveryTarget] = useState("");
@@ -1051,8 +1050,6 @@ export default function App() {
     telegram?.ready?.();
 
     const username = telegram?.initDataUnsafe?.user?.username;
-    const telegramId = Number(telegram?.initDataUnsafe?.user?.id || 0) || null;
-    setCurrentManagerTelegramId(telegramId);
     if (username) {
       setCreateManagerContact(`@${username}`);
       setExecutorContact(`@${username}`);
@@ -1320,9 +1317,14 @@ export default function App() {
   }, [screen, activeBottomTab, createManagerContact]);
 
   useEffect(() => {
+    if (screen === "managerApp" && (activeBottomTab === "executors" || activeBottomTab === "profile")) {
+      void loadApprovedExecutors();
+    }
+  }, [screen, activeBottomTab]);
+
+  useEffect(() => {
     if (screen === "managerApp" && activeBottomTab === "executors") {
       void loadPendingExecutors();
-      void loadApprovedExecutors();
     }
   }, [screen, activeBottomTab]);
 
@@ -1922,7 +1924,7 @@ export default function App() {
           : "Исполнитель отклонён"
       );
 
-      await Promise.allSettled([loadPendingExecutors(), loadApprovedExecutors()]);
+      await loadPendingExecutors();
     } catch (error) {
       console.error("Failed to moderate executor:", error);
       setModerationMessage("Не удалось сохранить решение");
@@ -2019,11 +2021,12 @@ export default function App() {
       return Number.isFinite(value) ? sum + value : sum;
     }, 0);
 
+    const currentManagerId = Number((window as any)?.Telegram?.WebApp?.initDataUnsafe?.user?.id || 0) || null;
     const approvedByMe = approvedExecutors.filter((executor) => {
       const approvedByRaw = String(executor.approvedBy || "").trim();
       const approvedByNormalized = approvedByRaw.replace(/^@+/, "").toLowerCase();
       const byContact = approvedByNormalized && approvedByNormalized === normalizedContact;
-      const byManagerId = currentManagerTelegramId && Number(executor.approvedByManagerId || 0) === Number(currentManagerTelegramId);
+      const byManagerId = currentManagerId && Number(executor.approvedByManagerId || 0) === currentManagerId;
       return Boolean(byContact || byManagerId);
     });
 
@@ -2036,7 +2039,7 @@ export default function App() {
       approvedCount: approvedByMe.length,
       approvedExecutors: approvedByMe
     };
-  }, [createManagerContact, currentManagerTelegramId, managerTasks, approvedExecutors]);
+  }, [createManagerContact, managerTasks, approvedExecutors]);
 
   const calculatedManagerCalculator = useMemo(
     () => calculateManagerCalculator(calculatorInputs),
@@ -2243,14 +2246,13 @@ export default function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error((data as any)?.error || "Failed to update task");
 
-      const updatedTask = (data as any)?.task || null;
       setEditingTaskId(null);
       setEditTaskDeadlineClientFault(false);
       setEditTaskDeadlineReworkMode(false);
-      if (selectedTask?.id === editingTaskId && updatedTask) {
-        setSelectedTask(updatedTask);
-      }
       await Promise.allSettled([loadTasks(), loadManagerTasks()]);
+      if (selectedTask?.id === editingTaskId) {
+        setSelectedTask((prev) => ({ ...(prev || {}), ...(((data as any)?.task || {}) as Task) }));
+      }
     } catch (error) {
       console.error("Failed to update task:", error);
       setEditTaskError("Не удалось сохранить задачу");
@@ -2875,6 +2877,8 @@ export default function App() {
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Рейтинг</div><div className="text-2xl font-semibold text-white">{typeof executor?.rating === "number" ? executor.rating : "—"}</div></div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.averageRevisions === "number" ? executor.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
                           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Заработано</div><div className="text-2xl font-semibold text-white">{typeof executor?.stats?.earnedAmount === "number" ? `${executor.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Просрочено</div><div className="text-2xl font-semibold text-white">{executor?.stats?.deadlineMissedCount ?? 0}</div></div>
+                          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Из них клиент</div><div className="text-2xl font-semibold text-white">{executor?.stats?.deadlineClientFaultCount ?? 0}</div></div>
                         </div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">ID исполнителя</div><div className="text-white">{executor?.executorCode || "—"}</div></div>
                         <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4"><div className="mb-1 text-xs uppercase tracking-[0.16em] text-white/35">Имя и фамилия</div><div className="text-white">{executor?.fullName || "—"}</div></div>
