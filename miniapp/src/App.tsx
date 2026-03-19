@@ -92,6 +92,8 @@ type ExecutorProfile = {
     completedTasks?: number;
     averageRevisions?: number;
     earnedAmount?: number;
+    deadlineMissedCount?: number;
+    deadlineClientFaultCount?: number;
   };
   paymentInvoices?: Array<{ value?: string; createdAt?: string; taskId?: number; taskTitle?: string; price?: string; paymentMethod?: string | null; managerContact?: string } | string>;
   reviewAccuracy?: number | null;
@@ -776,6 +778,7 @@ function TaskDetailModal({
         ) : null}
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
+          <HistoryList title="История переносов дедлайна" items={task.deadlineHistory} />
           <FixesPreviewCard
             items={mergeHistoryItems(task.stageMaterials?.fixesHistory, task.stageMaterials?.fixesNote)}
             onOpenAll={() => onOpenAllFixes?.(task)}
@@ -833,6 +836,8 @@ function ExecutorProfileViewModal({
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Способ оплаты</div><div>{profile.paymentMethod || "—"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Среднее число правок</div><div>{typeof profile.stats?.averageRevisions === "number" ? profile.stats.averageRevisions.toFixed(1) : "0.0"}</div></div>
           <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Заработано</div><div>{typeof profile.stats?.earnedAmount === "number" ? `${profile.stats.earnedAmount.toLocaleString("ru-RU")} ₽` : "0 ₽"}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Просрочено</div><div>{profile.stats?.deadlineMissedCount ?? 0}</div></div>
+          <div className="rounded-2xl bg-black/20 p-3"><div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">Из них клиент</div><div>{profile.stats?.deadlineClientFaultCount ?? 0}</div></div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-white/75">
@@ -1129,7 +1134,8 @@ export default function App() {
         "Ожидает подтверждения оплаты",
         "Оплачена",
         "Завершена",
-        "Закрыта"
+        "Закрыта",
+        "Просрочен дедлайн, клиент отказался"
       ].includes(status);
     });
 
@@ -1151,13 +1157,18 @@ export default function App() {
       return Number.isFinite(numericPrice) ? sum + numericPrice : sum;
     }, 0);
 
+    const deadlineMissedCount = assignedTasks.filter((task) => Boolean(task.deadlineMissedMarked)).length;
+    const deadlineClientFaultCount = assignedTasks.filter((task) => Number(task.deadlineClientChangeCount || 0) > 0).length;
+
     return {
       ...profile,
       completedOrders: completedTasks.length,
       stats: {
         completedTasks: completedTasks.length,
         averageRevisions,
-        earnedAmount: Number(earnedAmount.toFixed(2))
+        earnedAmount: Number(earnedAmount.toFixed(2)),
+        deadlineMissedCount,
+        deadlineClientFaultCount
       }
     };
   };
@@ -1988,9 +1999,10 @@ export default function App() {
 
   const managerProfileStats = useMemo(() => {
     const contact = createManagerContact.trim();
+    const normalizedContact = contact.replace(/^@+/, "").toLowerCase();
     const createdTasks = Array.isArray(managerTasks) ? managerTasks : [];
     const totalTasks = createdTasks.length;
-    const archivedStatuses = new Set(["Оплачена", "Выполнена", "Не оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты", "Завершена", "Закрыта"]);
+    const archivedStatuses = new Set(["Оплачена", "Выполнена", "Не оплачена", "Ожидает счёт", "Счёт загружен", "Ожидает подтверждения оплаты", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"]);
     const completedTasks = createdTasks.filter((task) => archivedStatuses.has(String(task.status || ""))).length;
     const activeTasksCount = createdTasks.filter((task) => !archivedStatuses.has(String(task.status || ""))).length;
     const totalTaskBudget = createdTasks.reduce((sum, task) => {
@@ -1998,7 +2010,11 @@ export default function App() {
       return Number.isFinite(value) ? sum + value : sum;
     }, 0);
 
-    const approvedByMe = approvedExecutors.filter((executor) => String(executor.approvedBy || "").trim() === contact);
+    const approvedByMe = approvedExecutors.filter((executor) => {
+      const approvedByRaw = String(executor.approvedBy || "").trim();
+      const approvedByNormalized = approvedByRaw.replace(/^@+/, "").toLowerCase();
+      return approvedByNormalized && approvedByNormalized === normalizedContact;
+    });
 
     return {
       contact,
