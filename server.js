@@ -108,20 +108,6 @@ async function initDb() {
   }
 
   await runQuery(`
-    CREATE TABLE IF NOT EXISTS manager_calculators (
-      id TEXT PRIMARY KEY,
-      manager_contact TEXT NOT NULL,
-      title TEXT,
-      task_id BIGINT,
-      task_title TEXT,
-      inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
-      totals JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await runQuery(`
     CREATE TABLE IF NOT EXISTS manager_contacts (
       telegram_id BIGINT PRIMARY KEY,
       contact TEXT NOT NULL,
@@ -1468,6 +1454,8 @@ function mapTaskForMiniapp(task) {
     title: task.title || "",
     type: task.categories || [],
     deadline: task.deadline || "",
+    deadlineDate: task.deadlineDate || "",
+    deadlineTime: task.deadlineTime || "",
     price: task.price || "",
     manager: task.managerContact || "—",
     status: task.status || "",
@@ -4237,41 +4225,8 @@ ${task.title}`,
           const payload = JSON.parse(body || "{}");
           const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
           if (!task) return 
-    if (req.method === "GET" && parsedUrl.pathname === "/api/calculators") {
-      try {
-        const managerContact = String(parsedUrl.searchParams.get("managerContact") || "").trim();
-        if (!managerContact) {
-          return sendJson(res, 400, { error: "managerContact is required" });
-        }
-
-        const result = await runQuery(`
-          SELECT *
-          FROM manager_calculators
-          WHERE manager_contact = $1
-          ORDER BY updated_at DESC
-        `, [managerContact]);
-
-        const calculators = result.rows.map((row) => ({
-          id: row.id,
-          title: row.title || "",
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          taskId: row.task_id,
-          taskTitle: row.task_title,
-          inputs: row.inputs || {},
-          totals: row.totals || {}
-        }));
-
-        return sendJson(res, 200, { ok: true, calculators });
-      } catch (error) {
-        console.error("GET /api/calculators error:", error);
-        return sendJson(res, 500, { error: "Failed to load calculators" });
-      }
-    }
-
-    if (req.method === "POST" && req.url === "/api/calculators/save") {
+    if (req.method === "POST" && req.url === "/api/tasks/update") {
       let body = "";
-
       req.on("data", (chunk) => {
         body += chunk.toString();
       });
@@ -4279,41 +4234,28 @@ ${task.title}`,
       req.on("end", async () => {
         try {
           const payload = JSON.parse(body || "{}");
-          const managerContact = String(payload.managerContact || "").trim();
-          const entry = payload.entry || {};
+          const task = tasks.find((item) => item.id === Number(payload.taskId || 0));
 
-          if (!managerContact || !entry?.id) {
-            return sendJson(res, 400, { error: "managerContact and entry.id are required" });
+          if (!task) {
+            return sendJson(res, 404, { error: "Task not found" });
           }
 
-          await runQuery(`
-            INSERT INTO manager_calculators (
-              id, manager_contact, title, task_id, task_title, inputs, totals, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
-            ON CONFLICT (id) DO UPDATE SET
-              manager_contact = EXCLUDED.manager_contact,
-              title = EXCLUDED.title,
-              task_id = EXCLUDED.task_id,
-              task_title = EXCLUDED.task_title,
-              inputs = EXCLUDED.inputs,
-              totals = EXCLUDED.totals,
-              updated_at = EXCLUDED.updated_at
-          `, [
-            String(entry.id),
-            managerContact,
-            String(entry.title || ""),
-            entry.taskId ? Number(entry.taskId) : null,
-            entry.taskTitle ? String(entry.taskTitle) : null,
-            JSON.stringify(entry.inputs || {}),
-            JSON.stringify(entry.totals || {}),
-            entry.createdAt || new Date().toISOString(),
-            entry.updatedAt || new Date().toISOString()
-          ]);
+          task.title = String(payload.title || task.title || "").trim();
+          task.categories = Array.isArray(payload.categories) ? payload.categories : (task.categories || []);
+          task.deadlineDate = String(payload.deadlineDate || task.deadlineDate || "").trim();
+          task.deadlineTime = String(payload.deadlineTime || task.deadlineTime || "").trim();
+          task.deadline = [task.deadlineDate, task.deadlineTime].filter(Boolean).join(" ");
+          task.price = String(payload.price || task.price || "").trim();
+          task.sources = payload.sources ? { type: "text", value: String(payload.sources).trim() } : null;
+          task.refs_data = payload.refs_data ? { type: "text", value: String(payload.refs_data).trim() } : null;
+          task.deliveryTarget = payload.deliveryTarget ? String(payload.deliveryTarget).trim() : "";
+          task.comment = payload.comment ? String(payload.comment).trim() : "";
 
-          return sendJson(res, 200, { ok: true });
+          await saveTaskToDb(task);
+          return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
         } catch (error) {
-          console.error("POST /api/calculators/save error:", error);
-          return sendJson(res, 500, { error: "Failed to save calculator" });
+          console.error("POST /api/tasks/update error:", error);
+          return sendJson(res, 500, { error: "Failed to update task" });
         }
       });
 
