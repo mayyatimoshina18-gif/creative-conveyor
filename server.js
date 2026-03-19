@@ -1397,7 +1397,8 @@ function calculateExecutorStats(executorTelegramId) {
     "Счёт загружен",
     "Ожидает подтверждения оплаты",
     "Выполнена",
-    "Не оплачена"
+    "Не оплачена",
+    "Просрочен дедлайн, клиент отказался"
   ]);
 
   const completedTasks = executorTasks.filter((task) => {
@@ -1425,10 +1426,15 @@ function calculateExecutorStats(executorTelegramId) {
     return sum + priceNumber;
   }, 0);
 
+  const deadlineMissedCount = executorTasks.filter((task) => Boolean(task?.timeline?.deadlineMissedMarkedAt)).length;
+  const deadlineClientFaultCount = executorTasks.filter((task) => Array.isArray(task?.timeline?.deadlineChanges) && task.timeline.deadlineChanges.some((item) => Boolean(item?.clientFault))).length;
+
   return {
     completedTasks: completedCount,
     averageRevisions,
-    earnedAmount: Number(earnedAmount.toFixed(2))
+    earnedAmount: Number(earnedAmount.toFixed(2)),
+    deadlineMissedCount,
+    deadlineClientFaultCount
   };
 }
 
@@ -1443,7 +1449,9 @@ function enrichExecutor(executor) {
     stats: {
       completedTasks: stats.completedTasks,
       averageRevisions: stats.averageRevisions,
-      earnedAmount: stats.earnedAmount
+      earnedAmount: stats.earnedAmount,
+      deadlineMissedCount: stats.deadlineMissedCount,
+      deadlineClientFaultCount: stats.deadlineClientFaultCount
     }
   };
 }
