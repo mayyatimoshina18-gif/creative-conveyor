@@ -1449,6 +1449,19 @@ function enrichExecutor(executor) {
 }
 
 function mapTaskForMiniapp(task) {
+  const timeline = task.timeline || {};
+  const deadlineTimestamp = task.deadlineDate && task.deadlineTime
+    ? new Date(`${task.deadlineDate}T${task.deadlineTime}:00`).getTime()
+    : 0;
+  const archivedStatuses = ["Оплачена", "Завершена", "Закрыта", "Просрочен дедлайн, клиент отказался"];
+  const deadlineExpired = Boolean(
+    deadlineTimestamp &&
+    !Number.isNaN(deadlineTimestamp) &&
+    Date.now() > deadlineTimestamp &&
+    !archivedStatuses.includes(String(task.status || "")) &&
+    !timeline.deadlineMissedMarkedAt
+  );
+
   return {
     id: task.id,
     title: task.title || "",
@@ -1472,7 +1485,10 @@ function mapTaskForMiniapp(task) {
     stageMaterials: task.stageMaterials || {},
     paymentMethod: task.stageMaterials?.paymentMeta?.method || null,
     paymentRequired: Boolean(task.stageMaterials?.paymentMeta?.required),
-    revisionCount: Number(task.timeline?.revisionCount || 0)
+    revisionCount: Number(task.timeline?.revisionCount || 0),
+    deadlineExpired,
+    deadlineMissedMarked: Boolean(timeline.deadlineMissedMarkedAt),
+    deadlinePenaltyPercent: timeline.deadlinePenaltyPercent ? Number(timeline.deadlinePenaltyPercent) : null
   };
 }
 
