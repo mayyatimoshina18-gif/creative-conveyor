@@ -652,6 +652,14 @@ function TaskDetailModal({
   onOpenExecutorProfile?: (executorId: number) => void;
 }) {
   if (!task) return null;
+
+  const deadlineTimerState = formatDeadlineTimer(task.deadlineDate, task.deadlineTime);
+  const canShowDeadlineDecision = Boolean(
+    (task.deadlineExpired || deadlineTimerState?.isExpired) &&
+    !["Просрочен дедлайн, клиент отказался", "Оплачена", "Завершена", "Закрыта"].includes(String(task.status || "")) &&
+    (onManagerDeadlineClose || onManagerDeadlineRework)
+  );
+
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3">
       <div className="max-h-[90vh] w-full max-w-[430px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0b0b10] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
@@ -669,7 +677,7 @@ function TaskDetailModal({
           Текущий этап: {getCurrentStageLabel(task.status)}
         </div>
 
-        {task.deadlineExpired ? (
+        {canShowDeadlineDecision ? (
           <div className="mb-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">
             {task.deadlineMissedMarked
               ? `Дедлайн отмечен как пропущенный${task.deadlinePenaltyPercent ? `. Рейтинг исполнителя снижен на ${task.deadlinePenaltyPercent}%` : ""}.`
@@ -726,7 +734,7 @@ function TaskDetailModal({
           </div>
         ) : null}
 
-        {task.deadlineExpired && !task.deadlineMissedMarked && (onManagerDeadlineClose || onManagerDeadlineRework) ? (
+        {canShowDeadlineDecision ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button
               onClick={() => {
@@ -4298,28 +4306,18 @@ function HistoryList({
   title: string;
   items?: Array<{ value?: string; createdAt?: string }> | null;
 }) {
-  const normalized = Array.isArray(items)
-    ? items
-        .filter((item) => item?.value)
-        .slice()
-        .sort((a, b) => {
-          const aTime = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const bTime = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return bTime - aTime;
-        })
-    : [];
-
+  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
   return (
     <div className="rounded-2xl bg-black/20 p-3">
       <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">{title}</div>
       {!normalized.length ? (
-        <div className="text-white/45">Переносов дедлайна пока не было</div>
+        <div className="text-white/45">—</div>
       ) : (
         <div className="space-y-3">
           {normalized.map((item, index) => (
             <div key={`${title}-${index}`} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
               <div className="mb-1 text-xs text-white/35">{formatDateLabel(item.createdAt)}</div>
-              <div className="text-sm whitespace-pre-wrap text-white/80"><RenderTextOrLink value={item.value} /></div>
+              <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
             </div>
           ))}
         </div>
