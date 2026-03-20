@@ -3832,18 +3832,6 @@ export default function App() {
                         <div className="text-xs uppercase tracking-[0.16em] text-white/35">На какую сумму отрулил</div>
                         <div className="mt-2 text-2xl font-semibold text-white">{formatRubles(managerProfileStats.totalTaskBudget)}</div>
                       </div>
-                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                        <div className="text-xs uppercase tracking-[0.16em] text-white/35">Просрочено производство</div>
-                        <div className="mt-2 text-2xl font-semibold text-white">
-                          {managerTasks.filter((t) => Boolean(t.deadlineMissedMarked) && !Number(t.deadlineClientChangeCount || 0)).length}
-                        </div>
-                      </div>
-                      <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                        <div className="text-xs uppercase tracking-[0.16em] text-white/35">Просрочено клиент</div>
-                        <div className="mt-2 text-2xl font-semibold text-white">
-                          {managerTasks.filter((t) => Boolean(t.deadlineMissedMarked) && Number(t.deadlineClientChangeCount || 0) > 0).length}
-                        </div>
-                      </div>
                     </div>
 
                     <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
