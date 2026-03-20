@@ -4614,16 +4614,39 @@ ${String(payload.note || "").trim() || "Открой задачу, чтобы п
 
           await saveTaskToDb(task);
 
-          if (task.assignedExecutorId && previousDeadline !== task.deadline) {
-            sendTaskNotification(
-              task.assignedExecutorId,
-              `По задаче #${task.id} менеджер изменил дедлайн. Новый срок: ${task.deadline || "без даты"}.`,
-              task,
-              "executor",
-              "tasks",
-              "active",
-              getMainKeyboard(false, true)
-            );
+          if (previousDeadline !== task.deadline) {
+            const reasonText = payload.deadlineClientFault
+              ? "Причина: по вине клиента."
+              : "Причина: перенос без вины клиента.";
+
+            if (task.assignedExecutorId) {
+              sendTaskNotification(
+                task.assignedExecutorId,
+                `⏰ Дедлайн по задаче #${task.id} изменён.
+
+Новый дедлайн: ${task.deadline || "без даты"}.
+${reasonText}`,
+                task,
+                "executor",
+                "tasks",
+                "active",
+                getMainKeyboard(false, true)
+              );
+            }
+
+            if (task.managerId) {
+              sendTaskNotification(
+                task.managerId,
+                `Дедлайн по задаче #${task.id} обновлён.
+
+Новый дедлайн: ${task.deadline || "без даты"}.`,
+                task,
+                "manager",
+                "tasks",
+                "active",
+                getMainKeyboard(true, false)
+              );
+            }
           }
 
           return sendJson(res, 200, { ok: true, task: mapTaskForMiniapp(task) });
