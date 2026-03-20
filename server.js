@@ -867,6 +867,15 @@ function getOpenTaskButton(task, role, bottomTab, topTab) {
   return [{ text: "Открыть в приложении", url }];
 }
 
+function getDeadlineDecisionKeyboard(task) {
+  return {
+    inline_keyboard: [[
+      { text: "Закрыть задачу", callback_data: `deadline_close_${task.id}` },
+      { text: "Дать время", callback_data: `deadline_rework_${task.id}` }
+    ]]
+  };
+}
+
 function sendTaskNotification(chatId, text, task, role, bottomTab, topTab, replyMarkup = null) {
   const extraRows = [];
   const taskButton = getOpenTaskButton(task, role, bottomTab, topTab);
@@ -1363,7 +1372,15 @@ async function processDeadlineNotifications() {
       task.timeline = task.timeline || {};
       task.timeline.deadlineAlertsSent = task.timeline.deadlineAlertsSent || {};
 
-      if (task.timeline.deadlineAlertsSent[bucket.key]) {
+      const deadlineTs = getTaskDeadlineTimestamp(task);
+      const diff = deadlineTs ? (deadlineTs - Date.now()) : 0;
+      const needsExpiredFollowup =
+        bucket.key === "expired" &&
+        diff <= -(3 * 60 * 60 * 1000) &&
+        !task.timeline.deadlineDecisionTakenAt &&
+        !task.timeline.deadlineAlertsSent.expiredFollowup3h;
+
+      if (task.timeline.deadlineAlertsSent[bucket.key] && !needsExpiredFollowup) {
         continue;
       }
 
@@ -1387,18 +1404,37 @@ async function processDeadlineNotifications() {
       }
 
       if (task.managerId) {
-        sendTaskNotification(
-          task.managerId,
-          message,
-          task,
-          "manager",
-          "tasks",
-          "active",
-          getMainKeyboard(true, false)
-        );
+        if (bucket.key === "expired") {
+          const managerText = needsExpiredFollowup
+            ? `⏰ По задаче #${task.id} дедлайн истёк более 3 часов назад. Нужно принять решение.`
+            : `⏰ Дедлайн по задаче #${task.id} истёк. Нужно принять решение.`;
+
+          sendTaskNotification(
+            task.managerId,
+            managerText,
+            task,
+            "manager",
+            "tasks",
+            "active",
+            getDeadlineDecisionKeyboard(task)
+          );
+        } else {
+          sendTaskNotification(
+            task.managerId,
+            message,
+            task,
+            "manager",
+            "tasks",
+            "active",
+            getMainKeyboard(true, false)
+          );
+        }
       }
 
       task.timeline.deadlineAlertsSent[bucket.key] = new Date().toISOString();
+      if (needsExpiredFollowup) {
+        task.timeline.deadlineAlertsSent.expiredFollowup3h = new Date().toISOString();
+      }
       await saveTaskToDb(task);
     } catch (error) {
       console.error("processDeadlineNotifications error:", error);
@@ -3163,6 +3199,80 @@ async function handleCallbackQuery(callbackQuery) {
 
     await assignExecutorToTask(chatId, from.id, taskId, executorId);
     answerCallback(callbackQuery.id, "Исполнитель назначен");
+    return;
+  }
+
+  if (data.startsWith("deadline_close_")) {
+    const taskId = Number(data.split("_")[2]);
+    const task = tasks.find(t => t.id === taskId);
+
+    if (!managers.has(from.id) || !task || Number(task.managerId || 0) !== Number(from.id)) {
+      answerCallback(callbackQuery.id, "Нет доступа");
+      return;
+    }
+
+    task.timeline = task.timeline || {};
+    task.timeline.deadlineDecisionTakenAt = new Date().toISOString();
+
+    const executor = executors.get(task.assignedExecutorId);
+    if (!task.timeline.deadlineMissedMarkedAt) {
+      const numericPrice = Number(String(task.price || "").replace(/[^\d,.-]/g, "").replace(",", "."));
+      const penaltyPercent = Number.isFinite(numericPrice) && numericPrice > 10000 ? 10 : 5;
+      task.timeline.deadlineMissedMarkedAt = new Date().toISOString();
+      task.timeline.deadlinePenaltyPercent = penaltyPercent;
+
+      if (executor && typeof executor.rating === "number") {
+        executor.rating = Number(Math.max(1, (executor.rating * (1 - penaltyPercent / 100))).toFixed(2));
+        executor.updatedAt = new Date().toISOString();
+        await saveExecutorToDb(executor);
+        executors.set(executor.telegramId, executor);
+      }
+    }
+
+    task.status = "Просрочен дедлайн, клиент отказался";
+    task.timeline.closedAfterDeadlineAt = new Date().toISOString();
+    await saveTaskToDb(task);
+
+    if (task.assignedExecutorId) {
+      sendTaskNotification(
+        task.assignedExecutorId,
+        `По задаче #${task.id} дедлайн отмечен как пропущенный. Задача закрыта.`,
+        task,
+        "executor",
+        "tasks",
+        "archived",
+        getMainKeyboard(false, true)
+      );
+    }
+
+    answerCallback(callbackQuery.id, "Задача закрыта");
+    sendMessage(chatId, `Задача #${task.id} закрыта после просрочки дедлайна.`);
+    return;
+  }
+
+  if (data.startsWith("deadline_rework_")) {
+    const taskId = Number(data.split("_")[2]);
+    const task = tasks.find(t => t.id === taskId);
+
+    if (!managers.has(from.id) || !task || Number(task.managerId || 0) !== Number(from.id)) {
+      answerCallback(callbackQuery.id, "Нет доступа");
+      return;
+    }
+
+    task.timeline = task.timeline || {};
+    task.timeline.deadlineDecisionTakenAt = new Date().toISOString();
+    await saveTaskToDb(task);
+
+    answerCallback(callbackQuery.id, "Открой задачу и задай новый дедлайн");
+    sendTaskNotification(
+      chatId,
+      `По задаче #${task.id} выбрано доделывание. Открой задачу в приложении и укажи новый дедлайн.`,
+      task,
+      "manager",
+      "tasks",
+      "active",
+      null
+    );
     return;
   }
 
