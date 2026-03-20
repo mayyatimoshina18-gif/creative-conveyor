@@ -4298,18 +4298,28 @@ function HistoryList({
   title: string;
   items?: Array<{ value?: string; createdAt?: string }> | null;
 }) {
-  const normalized = Array.isArray(items) ? items.filter((item) => item?.value) : [];
+  const normalized = Array.isArray(items)
+    ? items
+        .filter((item) => item?.value)
+        .slice()
+        .sort((a, b) => {
+          const aTime = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        })
+    : [];
+
   return (
     <div className="rounded-2xl bg-black/20 p-3">
       <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-white/35">{title}</div>
       {!normalized.length ? (
-        <div className="text-white/45">—</div>
+        <div className="text-white/45">Переносов дедлайна пока не было</div>
       ) : (
         <div className="space-y-3">
           {normalized.map((item, index) => (
             <div key={`${title}-${index}`} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
               <div className="mb-1 text-xs text-white/35">{formatDateLabel(item.createdAt)}</div>
-              <div className="text-sm text-white/80"><RenderTextOrLink value={item.value} /></div>
+              <div className="text-sm whitespace-pre-wrap text-white/80"><RenderTextOrLink value={item.value} /></div>
             </div>
           ))}
         </div>
