@@ -1301,6 +1301,112 @@ function notifyTaskMaterials(chatId, task) {
   }
 }
 
+
+/* -------------------- Deadline notifications -------------------- */
+
+const DEADLINE_NOTIFICATION_INTERVAL_MS = 60 * 1000;
+const DEADLINE_NOTIFICATION_BUCKETS = [
+  { key: "5h", ms: 5 * 60 * 60 * 1000, label: "5 часов" },
+  { key: "4h", ms: 4 * 60 * 60 * 1000, label: "4 часа" },
+  { key: "3h", ms: 3 * 60 * 60 * 1000, label: "3 часа" },
+  { key: "2h", ms: 2 * 60 * 60 * 1000, label: "2 часа" },
+  { key: "1h", ms: 1 * 60 * 60 * 1000, label: "1 час" },
+  { key: "30m", ms: 30 * 60 * 1000, label: "30 минут" }
+];
+
+function isDeadlineTrackingActive(task) {
+  const status = String(task?.status || "");
+  return ![
+    "Ожидает счёт",
+    "Счёт загружен",
+    "Выполнена",
+    "Не оплачена",
+    "Ожидает подтверждения оплаты",
+    "Оплачена",
+    "Завершена",
+    "Закрыта",
+    "Просрочен дедлайн, клиент отказался"
+  ].includes(status);
+}
+
+function getTaskDeadlineTimestamp(task) {
+  if (!task?.deadlineDate || !task?.deadlineTime) return 0;
+  const ts = new Date(`${task.deadlineDate}T${task.deadlineTime}:00`).getTime();
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function getCurrentDeadlineBucket(task) {
+  if (!isDeadlineTrackingActive(task)) return null;
+  const deadlineTs = getTaskDeadlineTimestamp(task);
+  if (!deadlineTs) return null;
+
+  const diff = deadlineTs - Date.now();
+  if (diff <= 0) {
+    return { key: "expired", label: "дедлайн истёк" };
+  }
+
+  for (const bucket of DEADLINE_NOTIFICATION_BUCKETS) {
+    if (diff <= bucket.ms) {
+      return bucket;
+    }
+  }
+
+  return null;
+}
+
+async function processDeadlineNotifications() {
+  for (const task of tasks) {
+    try {
+      const bucket = getCurrentDeadlineBucket(task);
+      if (!bucket) continue;
+
+      task.timeline = task.timeline || {};
+      task.timeline.deadlineAlertsSent = task.timeline.deadlineAlertsSent || {};
+
+      if (task.timeline.deadlineAlertsSent[bucket.key]) {
+        continue;
+      }
+
+      let message = "";
+      if (bucket.key === "expired") {
+        message = `⏰ Дедлайн по задаче #${task.id} истёк.`;
+      } else {
+        message = `⏰ По задаче #${task.id} до дедлайна осталось ${bucket.label}.`;
+      }
+
+      if (task.assignedExecutorId) {
+        sendTaskNotification(
+          task.assignedExecutorId,
+          message,
+          task,
+          "executor",
+          "tasks",
+          "active",
+          getMainKeyboard(false, true)
+        );
+      }
+
+      if (task.managerId) {
+        sendTaskNotification(
+          task.managerId,
+          message,
+          task,
+          "manager",
+          "tasks",
+          "active",
+          getMainKeyboard(true, false)
+        );
+      }
+
+      task.timeline.deadlineAlertsSent[bucket.key] = new Date().toISOString();
+      await saveTaskToDb(task);
+    } catch (error) {
+      console.error("processDeadlineNotifications error:", error);
+    }
+  }
+}
+
+
 /* -------------------- API -------------------- */
 
 function sendJson(res, statusCode, payload) {
@@ -4479,6 +4585,7 @@ ${String(payload.note || "").trim() || "Открой задачу, чтобы п
               createdAt: new Date().toISOString(),
               value: `${previousDeadline || "—"} → ${task.deadline || "—"}${payload.deadlineClientFault ? " · клиент" : ""}`
             });
+            task.timeline.deadlineAlertsSent = {};
           }
 
           if (payload.deadlineRework) {
@@ -4580,6 +4687,10 @@ if (req.method === "GET" && req.url === "/") {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found");
     });
+
+    setInterval(() => {
+      void processDeadlineNotifications();
+    }, DEADLINE_NOTIFICATION_INTERVAL_MS);
 
     server.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
